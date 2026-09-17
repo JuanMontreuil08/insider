@@ -285,3 +285,92 @@ ${JSON.stringify(candidates, null, 2)}
 
 export type ViralCuratorOutput = ViralCandidate[];
 export type ViralEnricherOutput = ViralRepresentation[];
+
+/* ------------------------------------------------------------------ */
+/*  Scene Writer (Kling prompt generation)                            */
+/* ------------------------------------------------------------------ */
+
+/** Minimal card shape for scene prompt generation. */
+export interface SceneCard {
+	id: string;
+	layer: string;
+	title: string;
+	fact: string;
+	explanation: string;
+}
+
+export interface ScenePromptOutput {
+	id: string;
+	scene_prompt: string;
+	negative_prompt: string;
+}
+
+/**
+ * Builds the prompt for the Scene Writer agent. It receives a batch of cards
+ * and returns a Kling-optimized scene_prompt + negative_prompt for each.
+ */
+export function buildSceneWriterPrompt(cards: SceneCard[]): string {
+	return `
+TASK
+For each game card below, write a Kling 3.0–optimized scene prompt that will
+generate a compelling 5-second cinematic video clip. Also write a negative prompt.
+
+INPUT FIELDS YOU RECEIVE
+- id: preserve exactly in your output
+- layer: "historical" or "viral" — affects your visual approach
+- title: the cultural reference name
+- fact: what happened
+- explanation: rich context with visual details (use this heavily)
+
+RULES FOR HISTORICAL CARDS
+- Set the scene in the correct time period with period-accurate clothing,
+  architecture, objects, and technology.
+- Do NOT name real people. Use archetypes: "a young engineer", "a group of
+  men in 1950s suits", "a professor at a university lab".
+- Use warm tungsten lighting for indoor 1960s–1980s scenes.
+- Use documentary-style camera: handheld shoulder-cam or slow dolly.
+
+RULES FOR VIRAL CARDS
+- Capture the specific 2026 San Francisco moment.
+- Use SF visual anchors: fog, hills, Victorian buildings, SoMa sidewalks,
+  neon storefronts, cable-car tracks, damp pavement.
+- Use modern cinematic style: tracking shots, shallow depth of field.
+- The explanation often contains a "For a cinematic scene..." paragraph —
+  use it as your primary visual reference.
+
+FORMAT REQUIREMENTS
+- scene_prompt: 60–120 words. Follow the master formula:
+  [Camera Movement] + [Subject & Action Physics] + [Environment/Lighting] + [Texture & Details]
+- negative_prompt: standard Kling artifacts to avoid.
+- Always describe MOVEMENT over 5 seconds, never a static image.
+- End the scene with a settling action to prevent late-clip drift.
+
+FEW-SHOT EXAMPLE
+
+Input card:
+{
+  "id": "hist-0",
+  "layer": "historical",
+  "title": "Fairchild's dollar-bill contract",
+  "fact": "When Fairchild's eight founders received their initial funding, bankers handed them eight new dollar bills and suggested they sign them as a contract.",
+  "explanation": "After eight engineers left Shockley Semiconductor..."
+}
+
+Good output:
+{
+  "id": "hist-0",
+  "scene_prompt": "Slow dolly-in toward a wooden desk in a sparse 1950s California office. Eight men in fitted suits gather around as a banker slides crisp dollar bills across the surface. Each man picks up a bill and signs it with a fountain pen, hands steady and deliberate. Warm tungsten lighting casts long shadows across paperwork and ashtrays. Camera settles on a close-up of the last signed bill resting on the desk, ink still wet. Film grain, shallow depth of field, 35mm documentary aesthetic.",
+  "negative_prompt": "blur, distort, low quality, shaky camera, cartoon, anime, text, watermark, deformed face, extra limbs, modern clothing, smartphones"
+}
+
+EXPECTED OUTPUT FORMAT
+Return valid JSON only: an array with one object for every input card.
+Every object must have exactly these fields: id (string), scene_prompt (string),
+negative_prompt (string).
+
+CARDS
+${JSON.stringify(cards, null, 2)}
+`.trim();
+}
+
+export type SceneWriterOutput = ScenePromptOutput[];
