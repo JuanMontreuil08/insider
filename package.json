@@ -1,0 +1,19 @@
+{
+	"name": "insider",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"check:types": "tsc --noEmit",
+		"ingest:historical": "node --env-file=.env --experimental-strip-types src/ingest.ts",
+		"ingest:one": "node --env-file=.env --experimental-strip-types src/ingest.ts",
+		"ingest:viral": "node --env-file=.env --experimental-strip-types src/ingest-viral.ts"
+	},
+	"dependencies": {
+		"@flue/runtime": "^2.0.5"
+	},
+	"devDependencies": {
+		"@flue/cli": "^2.0.5",
+		"@types/node": "^22.10.10",
+		"typescript": "^7.0.2"
+	}
+}
