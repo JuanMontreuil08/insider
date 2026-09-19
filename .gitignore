@@ -5,3 +5,5 @@ data/
 .DS_Store
 memory/
 output/discovery/
+output/images/
+output/videos/

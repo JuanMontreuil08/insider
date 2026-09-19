@@ -7,7 +7,8 @@
 		"ingest:historical": "node --env-file=.env --experimental-strip-types src/ingest.ts",
 		"ingest:one": "node --env-file=.env --experimental-strip-types src/ingest.ts",
 		"ingest:viral": "node --env-file=.env --experimental-strip-types src/ingest-viral.ts",
-		"generate:scenes": "node --env-file=.env --experimental-strip-types src/generate-scenes.ts"
+		"generate:scenes": "node --env-file=.env --experimental-strip-types src/generate-scenes.ts",
+		"generate:media": "node --env-file=.env --experimental-strip-types src/generate-media.ts"
 	},
 	"dependencies": {
 		"@flue/runtime": "^2.0.5"
