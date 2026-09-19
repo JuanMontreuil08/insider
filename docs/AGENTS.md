@@ -136,27 +136,50 @@ After evaluating 6 endpoints across Reddit, Twitter, and TikTok, one source was 
 - **TikTok "sf founders"** — Too noisy. Generic hustle content, hashtag spam.
 - **TikTok "silicon valley"** — Overlaps with "san francisco ai". Elizabeth Holmes content is notable but niche.
 
-## Kling AI strategy (researched, not yet implemented)
+## Kling AI strategy (implemented)
 
 ### Model selection
 
-- **Image generation:** Kling Image 3.0 — text-to-image, $0.028/image
-- **Video generation:** Kling Video 3.0 — image-to-video, 5s, 720p, $0.084/s (~$0.42/clip)
+- **Image generation:** Kling Image 3.0 — `model_name: "kling-v3"` via `/v1/images/generations`
+- **Video generation:** Kling Video 3.0 — `model_name: "kling-v3"` via `/v1/videos/image2video`
+- **Auth:** Single API key as Bearer token (no JWT needed)
 - **Not using:** Kling 3.0 Omni (character consistency across videos — not needed since each card is an independent scene)
 - **Not using:** Kling 3.0 Turbo (faster but no 4K, always generates audio)
+
+### API parameters (verified working)
+
+**Image generation:**
+```
+model_name: "kling-v3"
+prompt: <scene_prompt from D1>
+n: 1
+aspect_ratio: "16:9"
+```
+
+**Video generation (image-to-video):**
+```
+model_name: "kling-v3"
+image: <URL from image generation result>
+prompt: <scene_prompt from D1>
+negative_prompt: <negative_prompt from D1>
+duration: "5"
+mode: "std"          (720p; "pro" = 1080p, costs 2x)
+cfg_scale: 0.5       (official recommended, do not change)
+```
+
+**Async pattern:** POST creates task → poll GET every 10s until `task_status: "succeed"` → download from result URL.
 
 ### Generation strategy: pre-generated, not real-time
 
 - Video generation takes ~60s per 5s clip at 720p — too slow for real-time gameplay.
-- All media will be pre-generated and stored for instant serving.
+- All media will be pre-generated and stored locally for instant serving.
 
 ### Pipeline (two-step for quality)
 
-1. **Text-to-Image:** `scene_prompt` → Kling Image 3.0 → reference still
-2. **Image-to-Video:** reference still as `first_frame` → Kling Video 3.0 → 5s cinematic clip
-3. Store video URLs back in D1 (`image_url`, `video_url` columns)
+1. **Text-to-Image:** `scene_prompt` → Kling Image 3.0 → reference still → `output/images/{id}.png`
+2. **Image-to-Video:** reference still as `first_frame` → Kling Video 3.0 → 5s cinematic clip → `output/videos/{id}.mp4`
 
-Image-to-video holds visual consistency in 90% of cases vs 30% with text-to-video alone.
+Image-to-video holds visual consistency in ~90% of cases vs ~30% with text-to-video alone.
 
 ### Prompting best practices embedded in SceneWriter
 
@@ -168,16 +191,33 @@ Image-to-video holds visual consistency in 90% of cases vs 30% with text-to-vide
 - 60–120 word prompts (longer causes Kling to ignore details)
 - Negative prompt: "blur, distort, low quality, shaky camera, cartoon, anime, text, watermark, deformed face, extra limbs"
 
-### Estimated cost for 11 cards
+### Pricing (separate resource packages required)
 
-- 11 images: ~$0.31
-- 11 videos (5s, 720p): ~$4.62
-- **Total: ~$4.93**
+- Image and video APIs require **separate** resource package purchases at klingai.com/global/dev
+- Image: ~$0.028/image (2K) | Video std: ~$0.084/s (~$0.42/clip) | Video pro: ~$0.168/s (~$0.84/clip)
+
+### 5. Media generation pipeline (Kling API)
+
+- **Script:** `npm run generate:media` or `npm run generate:media -- "<card-id>"`
+- **Flow:** Read card from D1 (scene_prompt + negative_prompt) → Kling Image 3.0 (text-to-image) → save to `output/images/` → Kling Video 3.0 (image-to-video with first_frame) → save to `output/videos/`
+- **Default card:** `viral-7679590597857955102` (Terminator walks SF)
+- **Generated so far (4 cards):**
+  - `viral-7679590597857955102` — A Terminator walks around San Francisco
+  - `viral-7676624898005011742` — Tau Robotics cleaners roam San Francisco
+  - `viral-7678774671239630094` — AI billboards take over San Francisco
+  - `hist-0` — Fairchild's dollar-bill contract
+
+### 6. Demo game prototype
+
+- **File:** `demo.html` — standalone Kahoot-style quiz
+- **Features:** Video autoplay, 4 multiple-choice options (1 correct, 3 fake), category label, educational panel on answer with title/fact/explanation, score screen, play again
+- **Cards:** Uses the 4 generated videos above
+- **Style:** Minimalist dark theme, English only
 
 ## Next steps
 
-1. **Get Kling API key** — Create account at kling.ai/dev, purchase resource package.
-2. **Build `generate-media.ts`** — Script to read cards from D1, generate image (text-to-image), then video (image-to-video), save URLs back to D1.
-3. **Add `image_url` and `video_url` columns** to D1 `game_cards` table.
-4. **GitHub repo:** https://github.com/JuanMontreuil08/insider — push pending changes.
-5. **Build the game frontend** — Serve pre-generated videos from Cloudflare, multiple-choice UI, scoring, educational feedback.
+1. **Generate media for remaining 7 cards** — Run `npm run generate:media -- "<id>"` for each.
+2. **Store media in Cloudflare R2** — Upload images/videos, store public URLs back in D1 (`image_url`, `video_url` columns).
+3. **Build proper game frontend** — Replace `demo.html` with a Cloudflare Pages app that reads cards from D1 and serves videos from R2.
+4. **Add wrong-answer generation** — Use an LLM to generate plausible wrong answers per card instead of hardcoding.
+5. **GitHub repo:** https://github.com/JuanMontreuil08/insider — push pending changes.

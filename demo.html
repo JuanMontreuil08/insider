@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Insider</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0a0a0a; color: #e0e0e0; height: 100vh; overflow: hidden; }
+
+  .container { display: flex; height: 100vh; }
+  .main { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 32px; transition: flex 0.4s ease; }
+  .panel { width: 0; overflow: hidden; background: #111; border-left: 1px solid #222; transition: width 0.4s ease; }
+  .panel.open { width: 420px; }
+  .panel-content { width: 420px; padding: 40px 32px; overflow-y: auto; height: 100%; }
+
+  .category { font-size: 11px; text-transform: uppercase; letter-spacing: 2px; color: #888; margin-bottom: 16px; }
+  .progress { font-size: 12px; color: #555; margin-bottom: 24px; }
+
+  video { width: 100%; max-width: 720px; border-radius: 12px; margin-bottom: 32px; }
+
+  .question { font-size: 20px; font-weight: 600; max-width: 640px; text-align: center; margin-bottom: 28px; line-height: 1.4; }
+
+  .options { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; max-width: 640px; width: 100%; }
+  .option { padding: 16px 20px; background: #181818; border: 1px solid #2a2a2a; border-radius: 10px; cursor: pointer; font-size: 15px; text-align: left; transition: all 0.2s; color: #e0e0e0; }
+  .option:hover { border-color: #444; background: #1e1e1e; }
+  .option.correct { border-color: #4ade80; background: #0a2a1a; color: #4ade80; }
+  .option.wrong { border-color: #f87171; background: #2a0a0a; color: #f87171; }
+  .option.disabled { pointer-events: none; opacity: 0.5; }
+
+  .panel h2 { font-size: 22px; font-weight: 700; margin-bottom: 8px; color: #fff; }
+  .panel .fact { font-size: 14px; color: #aaa; margin-bottom: 20px; line-height: 1.5; font-style: italic; }
+  .panel .explanation { font-size: 15px; color: #ccc; line-height: 1.7; }
+  .panel .cat-label { font-size: 11px; text-transform: uppercase; letter-spacing: 2px; color: #888; margin-bottom: 16px; }
+
+  .next-btn { margin-top: 32px; padding: 12px 32px; background: #fff; color: #000; border: none; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer; display: none; }
+  .next-btn:hover { background: #ddd; }
+
+  .score-screen { text-align: center; }
+  .score-screen h1 { font-size: 48px; font-weight: 700; margin-bottom: 12px; }
+  .score-screen p { font-size: 18px; color: #888; }
+</style>
+</head>
+<body>
+
+<div class="container">
+  <div class="main" id="main"></div>
+  <div class="panel" id="panel">
+    <div class="panel-content" id="panel-content"></div>
+  </div>
+</div>
+
+<script>
+const cards = [
+  {
+    id: 'viral-7679590597857955102',
+    category: 'Memes',
+    title: 'A Terminator walks around San Francisco',
+    fact: 'A person walked a T-800-style Terminator robot around San Francisco, turning the city\'s robot culture into a viral spectacle.',
+    explanation: 'A person walking a T-800-style Terminator robot through San Francisco transformed the city\'s fascination with robotics into a playful public spectacle. The reference went viral because the instantly recognizable sci-fi silhouette appeared in a familiar urban setting, making science fiction feel like street theater rather than a movie prop. It also captures a local tension: San Francisco is both a real city of autonomous machines and a place where residents turn that future into a meme.',
+    video: 'output/videos/viral-7679590597857955102.mp4',
+    question: 'What is happening in this scene?',
+    correct: 'A Terminator robot walking through San Francisco streets',
+    wrong: [
+      'A new security robot patrolling a tech campus',
+      'A movie being filmed in downtown Oakland',
+      'A military drone demonstration in Silicon Valley',
+    ],
+  },
+  {
+    id: 'viral-7676624898005011742',
+    category: 'Products',
+    title: 'Tau Robotics cleaners roam San Francisco',
+    fact: 'Tau Robotics cleaning robots were spotted operating in San Francisco, drawing nearly 10 million views.',
+    explanation: 'Tau Robotics cleaning robots became a street-level symbol of San Francisco\'s robotics boom when people spotted them operating in public and shared the footage widely, drawing nearly 10 million views. The appeal is the collision of ordinary urban life with futuristic machinery: a compact cleaner moving through a city of sidewalks, storefronts, parked cars, pedestrians, and phone cameras. It turns an everyday chore into a public technology demonstration.',
+    video: 'output/videos/viral-7676624898005011742.mp4',
+    question: 'What kind of robot is shown in this scene?',
+    correct: 'An autonomous street-cleaning robot by Tau Robotics',
+    wrong: [
+      'A food delivery bot from DoorDash',
+      'A self-driving car prototype by Tesla',
+      'A sidewalk surveillance drone by Ring',
+    ],
+  },
+  {
+    id: 'viral-7678774671239630094',
+    category: 'Memes',
+    title: 'AI billboards take over San Francisco',
+    fact: 'The video jokes that San Francisco has been completely taken over by AI billboards, reflecting the city\'s visible generative-AI boom.',
+    explanation: 'The joke that San Francisco has been completely taken over by AI billboards exaggerates a recognizable local reality: generative-AI companies, products, and branding have become highly visible in the city\'s public spaces. The meme works because it turns an industry boom into an imagined urban takeover, with technology no longer confined to office interiors or investor presentations. It says something about SF culture\'s mix of enthusiasm, saturation, and self-aware skepticism toward the latest startup wave.',
+    video: 'output/videos/viral-7678774671239630094.mp4',
+    question: 'What cultural moment does this scene capture?',
+    correct: 'AI company billboards dominating San Francisco\'s streets',
+    wrong: [
+      'A new art installation in the Mission District',
+      'The launch of a city-wide digital transit system',
+      'Crypto advertisements during the 2021 bull market',
+    ],
+  },
+  {
+    id: 'hist-0',
+    category: 'Founder',
+    title: 'Fairchild\'s dollar-bill contract',
+    fact: 'When Fairchild\'s eight founders received their initial funding, bankers Arthur Rock and Bud Coyle handed them eight new dollar bills and suggested they sign them as a contract with one another.',
+    explanation: 'After eight engineers left Shockley Semiconductor, they secured initial funding with help from bankers Arthur Rock and Bud Coyle. The bankers\' memorable gesture — handing each founder a brand-new dollar bill to sign as a contract with the others — captured the trust and partnership behind Fairchild Semiconductor. Fairchild soon became central to Silicon Valley\'s semiconductor culture, including Bob Noyce\'s 1959 invention of the integrated circuit.',
+    video: 'output/videos/hist-0.mp4',
+    question: 'What historic moment is being depicted?',
+    correct: 'Fairchild Semiconductor\'s founders signing dollar bills as their contract',
+    wrong: [
+      'The first venture capital deal on Sand Hill Road',
+      'Steve Jobs signing Apple\'s incorporation papers',
+      'Intel\'s founding team receiving their first patent',
+    ],
+  },
+];
+
+let current = 0;
+let score = 0;
+
+function shuffle(arr) {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+function renderCard() {
+  const card = cards[current];
+  const options = shuffle([card.correct, ...card.wrong]);
+
+  document.getElementById('panel').classList.remove('open');
+
+  document.getElementById('main').innerHTML = `
+    <p class="category">${card.category}</p>
+    <p class="progress">${current + 1} / ${cards.length}</p>
+    <video src="${card.video}" autoplay muted loop playsinline></video>
+    <p class="question">${card.question}</p>
+    <div class="options">
+      ${options.map((o, i) => `<div class="option" data-idx="${i}" data-value="${o.replace(/"/g, '&quot;')}">${o}</div>`).join('')}
+    </div>
+    <button class="next-btn" id="next-btn">${current < cards.length - 1 ? 'Next' : 'See results'}</button>
+  `;
+
+  document.querySelectorAll('.option').forEach(el => {
+    el.addEventListener('click', () => handleAnswer(el, card));
+  });
+
+  document.getElementById('next-btn').addEventListener('click', () => {
+    current++;
+    if (current < cards.length) renderCard();
+    else renderScore();
+  });
+}
+
+function handleAnswer(el, card) {
+  const isCorrect = el.dataset.value === card.correct;
+
+  document.querySelectorAll('.option').forEach(o => {
+    o.classList.add('disabled');
+    if (o.dataset.value === card.correct) o.classList.add('correct');
+  });
+
+  if (isCorrect) {
+    score++;
+    el.classList.add('correct');
+  } else {
+    el.classList.add('wrong');
+  }
+
+  // Show panel
+  document.getElementById('panel-content').innerHTML = `
+    <p class="cat-label">${card.category}</p>
+    <h2>${card.title}</h2>
+    <p class="fact">${card.fact}</p>
+    <p class="explanation">${card.explanation}</p>
+  `;
+  document.getElementById('panel').classList.add('open');
+  document.getElementById('next-btn').style.display = 'inline-block';
+}
+
+function renderScore() {
+  document.getElementById('panel').classList.remove('open');
+  document.getElementById('main').innerHTML = `
+    <div class="score-screen">
+      <h1>${score} / ${cards.length}</h1>
+      <p>You got ${score} out of ${cards.length} right.</p>
+      <button class="next-btn" style="display:inline-block;margin-top:24px" onclick="current=0;score=0;renderCard()">Play again</button>
+    </div>
+  `;
+}
+
+renderCard();
+</script>
+</body>
+</html>
