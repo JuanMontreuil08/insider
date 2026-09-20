@@ -1,8 +1,8 @@
 export interface InstagramLocation {
-	pk: string;
+	pk: string | null;
 	name: string;
-	lat: number;
-	lng: number;
+	lat: number | null;
+	lng: number | null;
 }
 
 export interface InstagramReel {
@@ -10,27 +10,21 @@ export interface InstagramReel {
 	shortcode: string;
 	url: string;
 	username: string;
-	profileUrl: string;
 	caption: string;
 	thumbnailUrl: string | null;
 	publishedAt: string;
 	likeCount: number;
 	commentCount: number;
-	location: InstagramLocation;
+	location: InstagramLocation | null;
 }
-
-export interface JudgedReel {
-	id: string;
-	title: string;
-	description: string;
-}
-
-export interface MapPin extends InstagramReel, JudgedReel {}
 
 export interface PinCollection {
 	generatedAt: string;
 	query: string;
-	datePosted: 'last-month';
+	datePosted: 'last-month' | 'last-week';
+	lastSearchedOn?: string;
+	seenReelIds?: string[];
+	pipelineVersion?: number;
 	candidates: number;
-	pins: MapPin[];
+	pins: InstagramReel[];
 }
