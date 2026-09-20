@@ -24,7 +24,6 @@ export interface PinCollection {
 	datePosted: 'last-month' | 'last-week';
 	lastSearchedOn?: string;
 	seenReelIds?: string[];
-	pipelineVersion?: number;
 	candidates: number;
 	pins: InstagramReel[];
 }

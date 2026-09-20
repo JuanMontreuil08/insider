@@ -9,7 +9,6 @@ interface Env {
 }
 
 const OUTPUT_KEY = 'sf-ai-pins.json';
-const PIPELINE_VERSION = 2;
 const DATE_POSTED = 'last-week' as const;
 
 export default {
@@ -30,15 +29,6 @@ export default {
 async function ingest(env: Env) {
 	const today = new Date().toISOString().slice(0, 10);
 	const previous = await readPins(env.BUCKET);
-
-	if (
-		previous?.datePosted === DATE_POSTED &&
-		previous.lastSearchedOn === today &&
-		previous.pipelineVersion === PIPELINE_VERSION
-	) {
-		return { skipped: true, reason: `Already ingested on ${today}` };
-	}
-
 	const candidates = await fetchSanFranciscoAiReels(env.SCRAPE_API_KEY);
 	const knownIds = new Set([
 		...(previous?.seenReelIds ?? []),
@@ -58,7 +48,6 @@ async function ingest(env: Env) {
 		query: 'San Francisco AI',
 		datePosted: DATE_POSTED,
 		lastSearchedOn: today,
-		pipelineVersion: PIPELINE_VERSION,
 		seenReelIds: [...new Set([...knownIds, ...candidates.map((c) => c.id)])],
 		candidates: candidates.length,
 		pins,
