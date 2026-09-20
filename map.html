@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SF AI Pulse</title>
+  <link href="https://api.mapbox.com/mapbox-gl-js/v3.13.0/mapbox-gl.css" rel="stylesheet" />
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #0b0d11; color: #f5f7fb; font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
+    #map { height: 100dvh; width: 100vw; }
+    .hud { position: fixed; z-index: 1; top: 20px; left: 20px; max-width: min(340px, calc(100vw - 40px)); padding: 16px; background: rgba(11,13,17,.88); border: 1px solid rgba(255,255,255,.15); border-radius: 12px; backdrop-filter: blur(12px); }
+    h1, p { margin: 0; } h1 { font-size: 16px; letter-spacing: .08em; text-transform: uppercase; } .meta { margin-top: 7px; color: #aeb8c8; font-size: 13px; line-height: 1.45; }
+    .pin { width: 15px; height: 15px; border: 2px solid #0b0d11; border-radius: 50%; background: #ff4e2b; box-shadow: 0 0 0 5px rgba(255,78,43,.2); cursor: pointer; }
+    .mapboxgl-popup-content { min-width: 260px; padding: 0; overflow: hidden; color: #121722; font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
+    .popup-copy { padding: 16px; } .popup-copy h2 { margin: 0 0 8px; font-size: 17px; line-height: 1.2; } .popup-copy p { font-size: 13px; line-height: 1.45; } .byline { margin-top: 12px !important; color: #667085; } .place { margin-top: 4px !important; color: #667085; } .popup-copy a { color: #dd3f21; font-weight: 700; text-decoration: none; }
+    .thumb { display: block; width: 100%; aspect-ratio: 16 / 9; object-fit: cover; background: #e8edf5; }
+  </style>
+</head>
+<body>
+  <aside class="hud"><h1>SF AI Pulse</h1><p class="meta" id="status">Loading creator-tagged Instagram locations…</p></aside>
+  <main id="map" aria-label="Map of San Francisco AI Instagram Reels"></main>
+  <script src="/config.js"></script>
+  <script src="https://api.mapbox.com/mapbox-gl-js/v3.13.0/mapbox-gl.js"></script>
+  <script>
+    const status = document.getElementById('status');
+    if (!window.MAPBOX_ACCESS_TOKEN) {
+      status.textContent = 'Add a restricted public Mapbox token to public/config.js, then run the map from a local server.';
+    } else {
+      mapboxgl.accessToken = window.MAPBOX_ACCESS_TOKEN;
+      const map = new mapboxgl.Map({ container: 'map', style: 'mapbox://styles/mapbox/dark-v11', center: [-122.4194, 37.7749], zoom: 11.8, maxBounds: [[-122.53, 37.70], [-122.34, 37.84]] });
+      map.addControl(new mapboxgl.NavigationControl(), 'bottom-right');
+      fetch('/data/sf-ai-pins.json').then(response => response.json()).then(data => {
+        status.textContent = `${data.pins.length} judged SF AI Reels · creator-tagged locations · last month`;
+        for (const pin of data.pins) {
+          const marker = document.createElement('button'); marker.className = 'pin'; marker.setAttribute('aria-label', pin.title);
+          const thumbnail = pin.thumbnailUrl ? `<img class="thumb" src="${pin.thumbnailUrl}" alt="">` : '';
+          const html = `${thumbnail}<div class="popup-copy"><h2>${escapeHtml(pin.title)}</h2><p>${escapeHtml(pin.description)}</p><p class="byline"><a href="${pin.profileUrl}" target="_blank" rel="noreferrer">@${escapeHtml(pin.username)}</a> · ${pin.likeCount.toLocaleString()} likes</p><p class="place">Instagram location tag: ${escapeHtml(pin.location.name)}</p><p class="byline"><a href="${pin.url}" target="_blank" rel="noreferrer">View Reel ↗</a></p></div>`;
+          new mapboxgl.Marker({ element: marker }).setLngLat([pin.location.lng, pin.location.lat]).setPopup(new mapboxgl.Popup({ offset: 16 }).setHTML(html)).addTo(map);
+        }
+      }).catch(() => { status.textContent = 'Could not load the generated pin dataset.'; });
+    }
+    function escapeHtml(value) { const node = document.createElement('span'); node.textContent = value; return node.innerHTML; }
+  </script>
+</body>
+</html>

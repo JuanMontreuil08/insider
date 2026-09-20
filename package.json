@@ -4,11 +4,7 @@
 	"type": "module",
 	"scripts": {
 		"check:types": "tsc --noEmit",
-		"ingest:historical": "node --env-file=.env --experimental-strip-types src/ingest.ts",
-		"ingest:one": "node --env-file=.env --experimental-strip-types src/ingest.ts",
-		"ingest:viral": "node --env-file=.env --experimental-strip-types src/ingest-viral.ts",
-		"generate:scenes": "node --env-file=.env --experimental-strip-types src/generate-scenes.ts",
-		"generate:media": "node --env-file=.env --experimental-strip-types src/generate-media.ts"
+		"ingest:instagram": "node --env-file=.env --experimental-strip-types src/ingest-instagram.ts"
 	},
 	"dependencies": {
 		"@flue/runtime": "^2.0.5"
