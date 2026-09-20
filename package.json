@@ -3,14 +3,9 @@
 	"private": true,
 	"type": "module",
 	"scripts": {
-		"check:types": "tsc --noEmit",
-		"ingest:instagram": "node --env-file=.env --experimental-strip-types src/ingest-instagram.ts"
-	},
-	"dependencies": {
-		"@flue/runtime": "^2.0.5"
+		"check:types": "tsc --noEmit"
 	},
 	"devDependencies": {
-		"@flue/cli": "^2.0.5",
 		"@types/node": "^22.10.10",
 		"typescript": "^7.0.2"
 	}
