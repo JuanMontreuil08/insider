@@ -5,10 +5,14 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Insider</title>
   <style>
-    :root { --ink: #202020; --muted: #666; --line: #d8d8d8; --accent: #e84b2c; }
+    :root { --ink: #192721; --muted: #68736c; --line: #d8ddd5; --accent: #285a42; }
     * { box-sizing: border-box; }
-    body { margin: 0; background: #f7f7f6; color: var(--ink); font-family: Arial, Helvetica, sans-serif; }
-    .page { width: min(100% - 40px, 980px); margin: 0 auto; padding: 56px 0 80px; }
+    body { margin: 0; background: #f8f7f3; color: var(--ink); font-family: Arial, Helvetica, sans-serif; }
+    .page { width: min(100% - 40px, 980px); margin: 0 auto; padding: 34px 0 80px; }
+    .top { display:flex; align-items:center; justify-content:space-between; gap:20px; margin-bottom:72px; padding-bottom:20px; border-bottom:1px solid var(--line); }
+    .brand { font-size:24px; font-weight:800; letter-spacing:-.07em; text-decoration:none; color:var(--ink); }
+    .brand span { color:#8cbd51; }
+    .back { color:var(--ink); font-size:13px; text-decoration:none; }
     h1 { margin: 0; font-size: clamp(28px, 4vw, 44px); letter-spacing: -.045em; line-height: 1.05; }
     .intro { margin: 10px 0 30px; color: var(--muted); font-size: 15px; line-height: 1.45; }
     .search-label { display: block; margin-bottom: 9px; font: 11px/1.3 "SFMono-Regular", Menlo, Consolas, monospace; letter-spacing: .08em; text-transform: uppercase; }
@@ -16,7 +20,7 @@
     .search:focus { border-color: var(--accent); }
     .result-count { margin: 22px 0 14px; color: var(--muted); font: 12px/1.4 "SFMono-Regular", Menlo, Consolas, monospace; }
     .results { display: grid; gap: 16px; }
-    .reel { display: grid; grid-template-columns: minmax(0, 1fr) 178px; gap: 22px; padding: 22px; border: 1px solid var(--line); border-radius: 4px; background: #fff; }
+    .reel { display: grid; grid-template-columns: minmax(0, 1fr) 178px; gap: 22px; padding: 22px; border: 1px solid var(--line); border-radius: 12px; background: #fff; }
     .reel-copy { min-width: 0; }
     .reel-meta { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-bottom: 14px; color: var(--muted); font: 11px/1.5 "SFMono-Regular", Menlo, Consolas, monospace; }
     .reel-caption { margin: 0; white-space: pre-line; overflow-wrap: anywhere; font-size: 15px; line-height: 1.5; }
@@ -29,8 +33,9 @@
 </head>
 <body>
   <main class="page">
-    <h1>Insider</h1>
-    <p class="intro">What SF tech is talking about.</p>
+    <div class="top"><a class="brand" href="/">insider<span>.</span></a><a class="back" href="/">← Back to the city map</a></div>
+    <h1>Explore the conversation.</h1>
+    <p class="intro">Reels and stories from San Francisco’s tech scene.</p>
     <label class="search-label" for="search">Search captions</label>
     <input class="search" id="search" type="search" placeholder="Try Dreamforce" autocomplete="off" />
     <p class="result-count" id="result-count" role="status">Loading Reels…</p>
@@ -40,9 +45,10 @@
     const search = document.getElementById('search');
     const results = document.getElementById('results');
     const resultCount = document.getElementById('result-count');
+    search.value = new URLSearchParams(location.search).get('q') || '';
     let reels = [];
 
-    fetch('/public/data/sf-ai-pins.json')
+    fetch('https://insider-ingest.juanmontreuil71.workers.dev/data')
       .then((response) => { if (!response.ok) throw new Error('Could not load Reels'); return response.json(); })
       .then((data) => {
         reels = data.pins.slice().sort((a, b) => Date.parse(b.publishedAt) - Date.parse(a.publishedAt));
@@ -50,11 +56,11 @@
       })
       .catch(() => { resultCount.textContent = 'Could not load the Reel catalog.'; });
 
-    search.addEventListener('input', render);
+    search.addEventListener('input', () => { history.replaceState(null, '', search.value.trim() ? `?q=${encodeURIComponent(search.value.trim())}` : location.pathname); render(); });
 
     function render() {
       const query = search.value.trim().toLocaleLowerCase();
-      const matches = reels.filter((reel) => reel.caption.toLocaleLowerCase().includes(query));
+      const matches = reels.filter((reel) => [reel.caption, reel.username, reel.location?.name || ''].some((value) => value.toLocaleLowerCase().includes(query)));
       resultCount.textContent = `${matches.length} Reel${matches.length === 1 ? '' : 's'}${query ? ' matching your search' : ''}`;
       results.replaceChildren(...matches.map(reelCard));
       if (!matches.length) results.append(textElement('p', 'empty', 'No Reels match this search.'));

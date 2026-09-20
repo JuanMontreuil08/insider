@@ -3,7 +3,9 @@
 	"private": true,
 	"type": "module",
 	"scripts": {
-		"check:types": "tsc --noEmit"
+		"dev:site": "node --env-file=.env dev-server.mjs",
+		"check:types": "cd worker && tsc --noEmit",
+		"build:site": "mkdir -p dist/site && cp index.html map.html dist/site/"
 	},
 	"devDependencies": {
 		"@types/node": "^22.10.10",
