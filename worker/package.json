@@ -1,0 +1,9 @@
+{
+	"name": "insider-ingest-worker",
+	"private": true,
+	"type": "module",
+	"devDependencies": {
+		"@cloudflare/workers-types": "^5.20260918.0",
+		"wrangler": "^4.0.0"
+	}
+}

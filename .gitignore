@@ -7,3 +7,4 @@ memory/
 output/discovery/
 output/images/
 output/videos/
+.wrangler/

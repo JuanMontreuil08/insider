@@ -1,0 +1,14 @@
+{
+	"name": "insider-ingest",
+	"main": "src/index.ts",
+	"compatibility_date": "2024-12-01",
+	"triggers": {
+		"crons": ["0 14 * * *"]
+	},
+	"r2_buckets": [
+		{
+			"binding": "BUCKET",
+			"bucket_name": "insider-data"
+		}
+	]
+}
