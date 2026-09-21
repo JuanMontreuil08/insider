@@ -20,6 +20,7 @@ interface PlaceNote {
 	id: string;
 	place: string;
 	placeId?: string;
+	address?: string;
 	description: string;
 	lat: number;
 	lng: number;
@@ -90,12 +91,13 @@ export default {
 			const form = await request.formData();
 			const place = String(form.get('place') ?? '').trim();
 			const placeId = String(form.get('placeId') ?? '').trim();
+			const address = String(form.get('address') ?? '').trim();
 			const description = String(form.get('description') ?? '').trim();
 			const lat = Number(form.get('lat'));
 			const lng = Number(form.get('lng'));
 			const image = form.get('image');
 			const photo = image instanceof File && image.size > 0 ? image : null;
-			if (!place || place.length > 80 || placeId.length > 255 || !description || description.length > 500 ||
+			if (!place || place.length > 80 || placeId.length > 255 || address.length > 255 || !description || description.length > 500 ||
 				!Number.isFinite(lat) || lat < -90 || lat > 90 || !Number.isFinite(lng) || lng < -180 || lng > 180 ||
 				(photo !== null && (photo.size > 5_000_000 || !['image/jpeg', 'image/png', 'image/webp'].includes(photo.type)))) {
 				return Response.json({ error: 'Add a place and note. Optional photos must be JPG, PNG, or WebP under 5 MB.' }, { status: 400, headers: corsHeaders });
@@ -107,7 +109,7 @@ export default {
 				await env.BUCKET.put(`${IMAGE_PREFIX}${id}.${extension}`, photo.stream(), { httpMetadata: { contentType: photo.type } });
 				imageUrl = `/note-images/${id}.${extension}`;
 			}
-			const note: PlaceNote = { id, place, ...(placeId ? { placeId } : {}), description, lat, lng, imageUrl, createdAt: new Date().toISOString() };
+			const note: PlaceNote = { id, place, ...(placeId ? { placeId } : {}), ...(address ? { address } : {}), description, lat, lng, imageUrl, createdAt: new Date().toISOString() };
 			await env.BUCKET.put(`${NOTES_PREFIX}${id}.json`, JSON.stringify(note));
 			return Response.json(note, { status: 201, headers: corsHeaders });
 		}
