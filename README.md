@@ -1,8 +1,8 @@
 # Insider
 
-Insider has two pages: `index.html` is the search and city map home page; `map.html` shows searchable Instagram Reels. A search on the home page opens `/map.html?q=...`.
+Insider has two pages: `index.html` is the search and city map home page; `map.html` shows searchable TikTok videos. A search on the home page opens `/map.html?q=...`.
 
-The Cloudflare Worker serves the Reel catalog at `/data`, Google Maps configuration at `/config`, and community place notes at `/notes`. Notes and uploaded photos are stored as separate R2 objects so new posts do not overwrite one another. The home page loads current notes and adds a newly published note immediately.
+The Cloudflare Worker serves the TikTok video catalog at `/data`, backed by `sf-ai-tiktok-videos.json` in R2. The legacy Instagram catalog remains in `sf-ai-pins.json` and is not served. The Worker also serves Google Maps configuration at `/config` and community place notes at `/notes`. Notes and uploaded photos are stored as separate R2 objects so new posts do not overwrite one another. The home page loads current notes and adds a newly published note immediately.
 
 ## Setup
 
@@ -15,4 +15,4 @@ The map opens centered on San Francisco. Search and pins can use any location. N
 
 ## Development
 
-`npm run dev:site` starts the local site at `http://127.0.0.1:4173/` and loads `GOOGLE_MAPS_API_KEY` from the root `.env` at runtime. Do not commit or print the key. `npm run check:types` checks the Worker TypeScript. The Worker cron ingests recent Reels into `sf-ai-pins.json` in the `insider-data` R2 bucket. `/ingest` can trigger ingestion manually.
+`npm run dev:site` starts the local site at `http://127.0.0.1:4173/` and loads `GOOGLE_MAPS_API_KEY` from the root `.env` at runtime. Do not commit or print the key. `npm run check:types` checks the Worker TypeScript. The Worker cron ingests recent TikTok videos into `sf-ai-tiktok-videos.json` in the `insider-data` R2 bucket. `/ingest` can trigger ingestion manually. It runs at 14:00 UTC (9:00 AM America/Lima).

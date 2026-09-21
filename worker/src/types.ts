@@ -1,13 +1,6 @@
-export interface InstagramLocation {
-	pk: string | null;
-	name: string;
-	lat: number | null;
-	lng: number | null;
-}
-
-export interface InstagramReel {
+export interface TikTokVideo {
 	id: string;
-	shortcode: string;
+	platform: 'tiktok';
 	url: string;
 	username: string;
 	caption: string;
@@ -15,15 +8,14 @@ export interface InstagramReel {
 	publishedAt: string;
 	likeCount: number;
 	commentCount: number;
-	location: InstagramLocation | null;
 }
 
 export interface PinCollection {
 	generatedAt: string;
 	query: string;
-	datePosted: 'last-month' | 'last-week';
+	datePosted: 'this-month';
 	lastSearchedOn?: string;
 	seenReelIds?: string[];
 	candidates: number;
-	pins: InstagramReel[];
+	pins: TikTokVideo[];
 }

@@ -35,10 +35,10 @@
   <main class="page">
     <div class="top"><a class="brand" href="/">insider<span>.</span></a><a class="back" href="/">← Back to the city map</a></div>
     <h1>Explore the conversation.</h1>
-    <p class="intro">Reels and stories from San Francisco’s tech scene.</p>
+    <p class="intro">TikTok videos and stories from San Francisco’s tech scene.</p>
     <label class="search-label" for="search">Search captions</label>
     <input class="search" id="search" type="search" placeholder="Try Dreamforce" autocomplete="off" />
-    <p class="result-count" id="result-count" role="status">Loading Reels…</p>
+    <p class="result-count" id="result-count" role="status">Loading videos…</p>
     <div class="results" id="results"></div>
   </main>
   <script>
@@ -54,16 +54,16 @@
         reels = data.pins.slice().sort((a, b) => Date.parse(b.publishedAt) - Date.parse(a.publishedAt));
         render();
       })
-      .catch(() => { resultCount.textContent = 'Could not load the Reel catalog.'; });
+      .catch(() => { resultCount.textContent = 'Could not load the video catalog.'; });
 
     search.addEventListener('input', () => { history.replaceState(null, '', search.value.trim() ? `?q=${encodeURIComponent(search.value.trim())}` : location.pathname); render(); });
 
     function render() {
       const query = search.value.trim().toLocaleLowerCase();
       const matches = reels.filter((reel) => [reel.caption, reel.username, reel.location?.name || ''].some((value) => value.toLocaleLowerCase().includes(query)));
-      resultCount.textContent = `${matches.length} Reel${matches.length === 1 ? '' : 's'}${query ? ' matching your search' : ''}`;
+      resultCount.textContent = `${matches.length} video${matches.length === 1 ? '' : 's'}${query ? ' matching your search' : ''}`;
       results.replaceChildren(...matches.map(reelCard));
-      if (!matches.length) results.append(textElement('p', 'empty', 'No Reels match this search.'));
+      if (!matches.length) results.append(textElement('p', 'empty', 'No videos match this search.'));
     }
 
     function reelCard(reel) {
@@ -71,17 +71,17 @@
       const copy = textElement('div', 'reel-copy');
       const meta = textElement('div', 'reel-meta');
       meta.append(textElement('span', '', formatDate(reel.publishedAt)));
-      if (reel.location?.name) meta.append(textElement('span', '', reel.location.name));
       copy.append(meta, textElement('p', 'reel-caption', reel.caption));
       const footer = textElement('div', 'reel-footer');
-      footer.append(link(`@${reel.username}`, `https://www.instagram.com/${encodeURIComponent(reel.username)}/`), link('View Reel ↗', reel.url));
+      const isTikTok = reel.platform === 'tiktok';
+      footer.append(link(`@${reel.username}`, isTikTok ? `https://www.tiktok.com/@${encodeURIComponent(reel.username)}` : `https://www.instagram.com/${encodeURIComponent(reel.username)}/`), link(isTikTok ? 'View TikTok ↗' : 'View Reel ↗', reel.url));
       copy.append(footer);
       card.append(copy);
       if (reel.thumbnailUrl) {
         const image = document.createElement('img');
         image.className = 'reel-thumb';
         image.src = reel.thumbnailUrl;
-        image.alt = `Thumbnail for Reel by @${reel.username}`;
+        image.alt = `Thumbnail for TikTok video by @${reel.username}`;
         image.loading = 'lazy';
         card.append(image);
       }

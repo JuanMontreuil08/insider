@@ -1,6 +1,6 @@
-import { fetchSanFranciscoAiReels } from './instagram';
-import { judgeReels } from './judge';
-import type { InstagramReel, PinCollection } from './types';
+import { fetchSanFranciscoAiTikToks } from './tiktok';
+import { judgeVideos } from './judge';
+import type { PinCollection, TikTokVideo } from './types';
 
 interface Env {
 	BUCKET: R2Bucket;
@@ -11,8 +11,8 @@ interface Env {
 	GEOAPIFY_API_KEY?: string;
 }
 
-const OUTPUT_KEY = 'sf-ai-pins.json';
-const DATE_POSTED = 'last-week' as const;
+const OUTPUT_KEY = 'sf-ai-tiktok-videos.json';
+const DATE_POSTED = 'this-month' as const;
 const NOTES_PREFIX = 'place-notes/';
 const IMAGE_PREFIX = 'place-note-images/';
 
@@ -132,16 +132,16 @@ export default {
 async function ingest(env: Env) {
 	const today = new Date().toISOString().slice(0, 10);
 	const previous = await readPins(env.BUCKET);
-	const candidates = await fetchSanFranciscoAiReels(env.SCRAPE_API_KEY);
+	const candidates = await fetchSanFranciscoAiTikToks(env.SCRAPE_API_KEY);
 	const knownIds = new Set([
 		...(previous?.seenReelIds ?? []),
 		...(previous?.pins.map((p) => p.id) ?? []),
 	]);
 	const newCandidates = candidates.filter((c) => !knownIds.has(c.id));
 
-	let newPins: InstagramReel[] = [];
+	let newPins: TikTokVideo[] = [];
 	if (newCandidates.length > 0) {
-		const approved = await judgeReels(env.OPENAI_API_KEY, newCandidates);
+		const approved = await judgeVideos(env.OPENAI_API_KEY, newCandidates);
 		newPins = mergeApproved(newCandidates, approved);
 	}
 
@@ -174,7 +174,7 @@ async function readPins(bucket: R2Bucket): Promise<PinCollection | null> {
 	return data;
 }
 
-function mergeApproved(candidates: InstagramReel[], approved: string[]): InstagramReel[] {
+function mergeApproved(candidates: TikTokVideo[], approved: string[]): TikTokVideo[] {
 	if (!Array.isArray(approved)) throw new Error('Judge must return an array.');
 	const byId = new Map(candidates.map((c) => [c.id, c]));
 	const seen = new Set<string>();

@@ -1,0 +1,72 @@
+import type { TikTokVideo } from './types';
+
+const API = 'https://api.scrapecreators.com/v1/tiktok/search/keyword';
+const DATE_POSTED = 'this-month';
+const SORT_BY = 'most-liked';
+
+interface RawTikTokVideo {
+	aweme_id?: string | number;
+	desc?: string;
+	create_time?: number;
+	create_time_utc?: string;
+	url?: string;
+	author?: { nickname?: string; unique_id?: string };
+	statistics?: { digg_count?: number; comment_count?: number };
+	video?: { cover?: { url_list?: string[] } };
+}
+
+interface SearchItem {
+	aweme_info?: RawTikTokVideo;
+}
+
+interface SearchResponse {
+	success: boolean;
+	search_item_list?: SearchItem[];
+}
+
+export async function fetchSanFranciscoAiTikToks(apiKey: string): Promise<TikTokVideo[]> {
+	const url = new URL(API);
+	url.searchParams.set('query', 'San Francisco AI');
+	url.searchParams.set('date_posted', DATE_POSTED);
+	url.searchParams.set('sort_by', SORT_BY);
+	url.searchParams.set('region', 'US');
+
+	const response = await fetch(url, {
+		headers: { 'x-api-key': apiKey },
+		signal: AbortSignal.timeout(30_000),
+	});
+	if (!response.ok) throw new Error(`TikTok search returned HTTP ${response.status}.`);
+
+	const data = (await response.json()) as SearchResponse;
+	if (!data.success || !Array.isArray(data.search_item_list)) {
+		throw new Error('TikTok search returned an unsuccessful or malformed response.');
+	}
+
+	const candidates = new Map<string, TikTokVideo>();
+	for (const item of data.search_item_list) {
+		const video = toCandidateVideo(item.aweme_info);
+		if (video) candidates.set(video.id, video);
+	}
+	return [...candidates.values()];
+}
+
+function toCandidateVideo(video: RawTikTokVideo | undefined): TikTokVideo | null {
+	const id = video?.aweme_id ? String(video.aweme_id) : null;
+	const username = video?.author?.unique_id?.trim() || video?.author?.nickname?.trim() || null;
+	const caption = video?.desc?.trim();
+	const publishedAt = video?.create_time_utc ?? (typeof video?.create_time === 'number' ? new Date(video.create_time * 1000).toISOString() : null);
+
+	if (!id || !video?.url || !username || !caption || !publishedAt || Number.isNaN(Date.parse(publishedAt))) return null;
+
+	return {
+		id,
+		platform: 'tiktok',
+		url: video.url,
+		username,
+		caption,
+		thumbnailUrl: video.video?.cover?.url_list?.[0] ?? null,
+		publishedAt,
+		likeCount: video.statistics?.digg_count ?? 0,
+		commentCount: video.statistics?.comment_count ?? 0,
+	};
+}
