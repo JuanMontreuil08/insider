@@ -77,10 +77,13 @@
       footer.append(link(`@${reel.username}`, isTikTok ? `https://www.tiktok.com/@${encodeURIComponent(reel.username)}` : `https://www.instagram.com/${encodeURIComponent(reel.username)}/`), link(isTikTok ? 'View TikTok ↗' : 'View Reel ↗', reel.url));
       copy.append(footer);
       card.append(copy);
-      if (reel.thumbnailUrl) {
+      const thumbSrc = reel.thumbnailKey
+        ? `https://insider-ingest.juanmontreuil71.workers.dev${reel.thumbnailKey}`
+        : reel.thumbnailUrl;
+      if (thumbSrc) {
         const image = document.createElement('img');
         image.className = 'reel-thumb';
-        image.src = reel.thumbnailUrl;
+        image.src = thumbSrc;
         image.alt = `Thumbnail for TikTok video by @${reel.username}`;
         image.loading = 'lazy';
         card.append(image);

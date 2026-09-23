@@ -5,6 +5,8 @@ export interface TikTokVideo {
 	username: string;
 	caption: string;
 	thumbnailUrl: string | null;
+	/** R2 key for the cached thumbnail, served via /thumbs/:id */
+	thumbnailKey?: string | null;
 	publishedAt: string;
 	likeCount: number;
 	commentCount: number;

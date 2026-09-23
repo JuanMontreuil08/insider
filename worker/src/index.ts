@@ -1,11 +1,9 @@
 import { fetchSanFranciscoAiTikToks } from './tiktok';
-import { judgeVideos } from './judge';
 import type { PinCollection, TikTokVideo } from './types';
 
 interface Env {
 	BUCKET: R2Bucket;
 	SCRAPE_API_KEY: string;
-	OPENAI_API_KEY: string;
 	GOOGLE_MAPS_API_KEY?: string;
 	MAPBOX_PUBLIC_TOKEN?: string;
 	GEOAPIFY_API_KEY?: string;
@@ -15,6 +13,7 @@ const OUTPUT_KEY = 'sf-ai-tiktok-videos.json';
 const DATE_POSTED = 'this-month' as const;
 const NOTES_PREFIX = 'place-notes/';
 const IMAGE_PREFIX = 'place-note-images/';
+const THUMB_PREFIX = 'thumbs/';
 
 interface PlaceNote {
 	id: string;
@@ -122,6 +121,14 @@ export default {
 			return new Response(image.body, { headers: { ...corsHeaders, 'Content-Type': image.httpMetadata?.contentType ?? 'image/jpeg', 'Cache-Control': 'public, max-age=31536000, immutable' } });
 		}
 
+		if (pathname.startsWith('/thumbs/') && request.method === 'GET') {
+			const id = pathname.slice('/thumbs/'.length);
+			if (!/^[\w-]+$/.test(id)) return new Response('Not found', { status: 404, headers: corsHeaders });
+			const obj = await env.BUCKET.get(`${THUMB_PREFIX}${id}.jpg`);
+			if (!obj) return new Response('Not found', { status: 404, headers: corsHeaders });
+			return new Response(obj.body, { headers: { ...corsHeaders, 'Content-Type': 'image/jpeg', 'Cache-Control': 'public, max-age=31536000, immutable' } });
+		}
+
 		if (pathname === '/ingest') {
 			const result = await ingest(env);
 			return Response.json(result, { headers: corsHeaders });
@@ -139,15 +146,9 @@ async function ingest(env: Env) {
 		...(previous?.seenReelIds ?? []),
 		...(previous?.pins.map((p) => p.id) ?? []),
 	]);
-	const newCandidates = candidates.filter((c) => !knownIds.has(c.id));
-
-	let newPins: TikTokVideo[] = [];
-	if (newCandidates.length > 0) {
-		const approved = await judgeVideos(env.OPENAI_API_KEY, newCandidates);
-		newPins = mergeApproved(newCandidates, approved);
-	}
-
-	const pins = [...(previous?.pins ?? []), ...newPins];
+	const newVideos = candidates.filter((c) => !knownIds.has(c.id));
+	await cacheThumbnails(env.BUCKET, newVideos);
+	const pins = [...(previous?.pins ?? []), ...newVideos];
 	const output: PinCollection = {
 		generatedAt: new Date().toISOString(),
 		query: 'San Francisco AI',
@@ -162,8 +163,7 @@ async function ingest(env: Env) {
 
 	return {
 		candidates: candidates.length,
-		newCandidates: newCandidates.length,
-		added: newPins.length,
+		new: newVideos.length,
 		totalPins: pins.length,
 	};
 }
@@ -176,16 +176,19 @@ async function readPins(bucket: R2Bucket): Promise<PinCollection | null> {
 	return data;
 }
 
-function mergeApproved(candidates: TikTokVideo[], approved: string[]): TikTokVideo[] {
-	if (!Array.isArray(approved)) throw new Error('Judge must return an array.');
-	const byId = new Map(candidates.map((c) => [c.id, c]));
-	const seen = new Set<string>();
-	return approved.map((id) => {
-		const candidate = byId.get(id);
-		if (typeof id !== 'string' || !candidate || seen.has(id)) {
-			throw new Error(`Judge returned an invalid result for id=${id}.`);
-		}
-		seen.add(id);
-		return candidate;
-	});
+async function cacheThumbnails(bucket: R2Bucket, videos: TikTokVideo[]) {
+	await Promise.allSettled(
+		videos.map(async (video) => {
+			if (!video.thumbnailUrl) return;
+			try {
+				const res = await fetch(video.thumbnailUrl, { signal: AbortSignal.timeout(10_000) });
+				if (!res.ok || !res.body) return;
+				const key = `${THUMB_PREFIX}${video.id}.jpg`;
+				await bucket.put(key, res.body, { httpMetadata: { contentType: 'image/jpeg' } });
+				video.thumbnailKey = `/thumbs/${video.id}`;
+			} catch {
+				// thumbnail download failed — leave thumbnailKey unset
+			}
+		}),
+	);
 }
