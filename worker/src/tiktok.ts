@@ -1,3 +1,4 @@
+import { detect } from 'tinyld';
 import type { TikTokVideo } from './types';
 
 const API = 'https://api.scrapecreators.com/v1/tiktok/search/keyword';
@@ -47,7 +48,18 @@ export async function fetchSanFranciscoAiTikToks(apiKey: string): Promise<TikTok
 		const video = toCandidateVideo(item.aweme_info);
 		if (video) candidates.set(video.id, video);
 	}
-	return [...candidates.values()];
+	return [...candidates.values()].filter(isEnglishOrSpanish);
+}
+
+const ALLOWED_LANGS = new Set(['en', 'es']);
+
+function isEnglishOrSpanish(video: TikTokVideo): boolean {
+	// Strip hashtags and mentions for cleaner detection
+	const cleaned = video.caption.replace(/#\S+/g, '').replace(/@\S+/g, '').trim();
+	// Short or hashtag-heavy captions are unreliable — allow them through
+	if (cleaned.length < 40) return true;
+	const lang = detect(cleaned);
+	return ALLOWED_LANGS.has(lang);
 }
 
 function toCandidateVideo(video: RawTikTokVideo | undefined): TikTokVideo | null {
