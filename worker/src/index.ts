@@ -1,11 +1,16 @@
 import { Buffer } from 'node:buffer';
+import { McpServer } from '@modelcontextprotocol/server';
+import { createMcpHandler } from 'agents/mcp/server';
 import { fetchSanFranciscoAiTikToks } from './tiktok';
 import type { PinCollection, ReelTranscript, TikTokIngestCandidate, TikTokVideo } from './types';
+import { z } from 'zod';
 
 interface Env {
 	BUCKET: R2Bucket;
 	AI: Ai;
 	SCRAPE_API_KEY: string;
+	/** A single-user bearer token used only while testing the Hermes MCP connection. */
+	HERMES_MCP_TOKEN?: string;
 	GOOGLE_MAPS_API_KEY?: string;
 	MAPBOX_PUBLIC_TOKEN?: string;
 	GEOAPIFY_API_KEY?: string;
@@ -40,7 +45,8 @@ export default {
 	},
 
 	async fetch(request: Request, env: Env, ctx: ExecutionContext) {
-		const { pathname } = new URL(request.url);
+		const requestUrl = new URL(request.url);
+		const { pathname } = requestUrl;
 		const corsHeaders = {
 			'Access-Control-Allow-Origin': '*',
 			'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
@@ -49,6 +55,13 @@ export default {
 
 		if (request.method === 'OPTIONS') {
 			return new Response(null, { headers: corsHeaders });
+		}
+
+		if (pathname === '/mcp') {
+			if (!isHermesAuthorized(request, env.HERMES_MCP_TOKEN)) {
+				return new Response('Unauthorized', { status: 401, headers: { 'WWW-Authenticate': 'Bearer' } });
+			}
+			return createMcpHandler(() => createHermesMcpServer(env.BUCKET, requestUrl.origin))(request, env, ctx);
 		}
 
 		if (pathname === '/data') {
@@ -144,6 +157,80 @@ export default {
 		return new Response('GET /data or POST /ingest', { status: 404, headers: corsHeaders });
 	},
 };
+
+/**
+ * A stateless remote MCP server. Keeping the catalog and R2 reads inside the
+ * Worker means the MCP client never receives an R2 credential or object key.
+ */
+function createHermesMcpServer(bucket: R2Bucket, origin: string) {
+	const server = new McpServer({ name: 'insider-reels', version: '1.0.0' });
+	server.registerTool(
+		'insider_get_reel',
+		{
+			description: 'Get a TikTok reel curated by Insider, including its caption, metadata, Whisper transcript, language, and timestamped segments. Use it before summarizing a reel for the user.',
+			inputSchema: { reelId: z.string().regex(/^\d+$/, 'reelId must be a numeric TikTok video ID') },
+		},
+		async ({ reelId }) => {
+			const collection = await readPins(bucket);
+			const reel = collection?.pins.find((pin) => pin.id === reelId);
+			if (!reel) {
+				return { isError: true, content: [{ type: 'text' as const, text: `No Insider reel exists with ID ${reelId}.` }] };
+			}
+
+			const transcriptObject = await bucket.get(`${TRANSCRIPT_PREFIX}${reelId}.json`);
+			const transcript = transcriptObject ? await transcriptObject.json<ReelTranscript>() : null;
+			const payload = {
+				reel: {
+					id: reel.id,
+					platform: reel.platform,
+					url: reel.url,
+					username: reel.username,
+					caption: reel.caption,
+					publishedAt: reel.publishedAt,
+					likeCount: reel.likeCount,
+					commentCount: reel.commentCount,
+					thumbnailUrl: reel.thumbnailKey ? `${origin}${reel.thumbnailKey}` : null,
+					video: {
+						durationSeconds: reel.videoDurationSeconds ?? null,
+						width: reel.videoWidth ?? null,
+						height: reel.videoHeight ?? null,
+						cachedForOneDay: reel.videoCached === true,
+						originalUrl: reel.url,
+					},
+				},
+				transcript: transcript ? {
+					status: transcript.status,
+					language: transcript.language,
+					text: transcript.text,
+					segments: transcript.segments,
+					generatedAt: transcript.generatedAt,
+				} : {
+					status: reel.transcriptStatus ?? 'unavailable',
+					language: reel.transcriptLanguage ?? null,
+					text: null,
+					segments: [],
+					generatedAt: null,
+				},
+			};
+
+			return { content: [{ type: 'text' as const, text: JSON.stringify(payload) }] };
+		},
+	);
+	return server;
+}
+
+function isHermesAuthorized(request: Request, expectedToken: string | undefined) {
+	const authorization = request.headers.get('Authorization');
+	if (!expectedToken || !authorization?.startsWith('Bearer ')) return false;
+	return timingSafeEqual(authorization.slice('Bearer '.length), expectedToken);
+}
+
+function timingSafeEqual(left: string, right: string) {
+	if (left.length !== right.length) return false;
+	let difference = 0;
+	for (let index = 0; index < left.length; index += 1) difference |= left.charCodeAt(index) ^ right.charCodeAt(index);
+	return difference === 0;
+}
 
 async function ingest(env: Env) {
 	const today = new Date().toISOString().slice(0, 10);
