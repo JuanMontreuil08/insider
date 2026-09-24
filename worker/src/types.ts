@@ -13,6 +13,9 @@ export interface TikTokVideo {
 	videoHeight?: number | null;
 	videoSizeBytes?: number | null;
 	videoCached?: boolean;
+	transcriptStatus?: TranscriptStatus;
+	transcriptLanguage?: string | null;
+	transcriptWordCount?: number | null;
 	publishedAt: string;
 	likeCount: number;
 	commentCount: number;
@@ -25,6 +28,22 @@ export interface TikTokVideo {
 export interface TikTokIngestCandidate {
 	video: TikTokVideo;
 	playbackUrl: string | null;
+	audioUrl: string | null;
+}
+
+export type TranscriptStatus = 'ready' | 'no_speech' | 'unavailable' | 'failed';
+
+/** Private R2 object stored at reel-transcripts/<reelId>.json. */
+export interface ReelTranscript {
+	reelId: string;
+	status: Extract<TranscriptStatus, 'ready' | 'no_speech'>;
+	text: string | null;
+	language: string | null;
+	wordCount: number | null;
+	vtt: string | null;
+	segments: Array<{ start: number | null; end: number | null; text: string }>;
+	generatedAt: string;
+	model: '@cf/openai/whisper-large-v3-turbo';
 }
 
 export interface PinCollection {

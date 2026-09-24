@@ -20,6 +20,7 @@ interface RawTikTokVideo {
 		width?: number;
 		height?: number;
 	};
+	music?: { play_url?: RawMediaAddress };
 }
 
 interface RawMediaAddress {
@@ -99,5 +100,6 @@ function toCandidateVideo(video: RawTikTokVideo | undefined): TikTokIngestCandid
 			commentCount: video.statistics?.comment_count ?? 0,
 		},
 		playbackUrl: video.video?.play_addr?.url_list?.[0] ?? null,
+		audioUrl: video.music?.play_url?.url_list?.[0] ?? null,
 	};
 }

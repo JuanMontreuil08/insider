@@ -1,8 +1,10 @@
+import { Buffer } from 'node:buffer';
 import { fetchSanFranciscoAiTikToks } from './tiktok';
-import type { PinCollection, TikTokIngestCandidate, TikTokVideo } from './types';
+import type { PinCollection, ReelTranscript, TikTokIngestCandidate, TikTokVideo } from './types';
 
 interface Env {
 	BUCKET: R2Bucket;
+	AI: Ai;
 	SCRAPE_API_KEY: string;
 	GOOGLE_MAPS_API_KEY?: string;
 	MAPBOX_PUBLIC_TOKEN?: string;
@@ -15,7 +17,10 @@ const NOTES_PREFIX = 'place-notes/';
 const IMAGE_PREFIX = 'place-note-images/';
 const THUMB_PREFIX = 'thumbs/';
 const TEMP_VIDEO_PREFIX = 'reels-temp/';
+const TRANSCRIPT_PREFIX = 'reel-transcripts/';
 const MEDIA_CACHE_CONCURRENCY = 3;
+const TRANSCRIPTION_CONCURRENCY = 2;
+const WHISPER_MODEL = '@cf/openai/whisper-large-v3-turbo' as const;
 
 interface PlaceNote {
 	id: string;
@@ -153,6 +158,7 @@ async function ingest(env: Env) {
 	await Promise.all([
 		cacheThumbnails(env.BUCKET, newVideos),
 		cacheVideos(env.BUCKET, newCandidates),
+		transcribeVideos(env, newCandidates),
 	]);
 	const pins = [...(previous?.pins ?? []), ...newVideos];
 	const output: PinCollection = {
@@ -210,6 +216,57 @@ async function cacheVideos(bucket: R2Bucket, candidates: TikTokIngestCandidate[]
 			candidate.video.videoCached = true;
 		} catch {
 			// Video caching is best-effort: the catalog remains usable if TikTok CDN fails.
+		}
+	});
+}
+
+async function transcribeVideos(env: Env, candidates: TikTokIngestCandidate[]) {
+	await forEachConcurrent(candidates, TRANSCRIPTION_CONCURRENCY, async (candidate) => {
+		if (!candidate.audioUrl) {
+			candidate.video.transcriptStatus = 'unavailable';
+			return;
+		}
+
+		try {
+			const audioResponse = await fetch(candidate.audioUrl, { redirect: 'follow', signal: AbortSignal.timeout(120_000) });
+			if (!audioResponse.ok) {
+				candidate.video.transcriptStatus = 'unavailable';
+				return;
+			}
+
+			const audio = Buffer.from(await audioResponse.arrayBuffer()).toString('base64');
+			const result = await env.AI.run(WHISPER_MODEL, {
+				audio,
+				task: 'transcribe',
+				vad_filter: true,
+				no_speech_threshold: 0.6,
+			});
+			const text = result.text.trim();
+			const status = text ? 'ready' : 'no_speech';
+			const transcript: ReelTranscript = {
+				reelId: candidate.video.id,
+				status,
+				text: text || null,
+				language: result.transcription_info?.language ?? null,
+				wordCount: result.word_count ?? null,
+				vtt: result.vtt ?? null,
+				segments: (result.segments ?? []).map((segment) => ({
+					start: segment.start ?? null,
+					end: segment.end ?? null,
+					text: segment.text?.trim() ?? '',
+				})),
+				generatedAt: new Date().toISOString(),
+				model: WHISPER_MODEL,
+			};
+			await env.BUCKET.put(`${TRANSCRIPT_PREFIX}${candidate.video.id}.json`, JSON.stringify(transcript), {
+				httpMetadata: { contentType: 'application/json' },
+			});
+			candidate.video.transcriptStatus = status;
+			candidate.video.transcriptLanguage = transcript.language;
+			candidate.video.transcriptWordCount = transcript.wordCount;
+		} catch {
+			// Transcription is best-effort: keep the reel available if audio or AI is unavailable.
+			candidate.video.transcriptStatus = 'failed';
 		}
 	});
 }

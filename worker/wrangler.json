@@ -10,5 +10,9 @@
 			"binding": "BUCKET",
 			"bucket_name": "insider-data"
 		}
-	]
+	],
+	"ai": {
+		"binding": "AI"
+	},
+	"compatibility_flags": ["nodejs_compat"]
 }
