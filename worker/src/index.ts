@@ -61,7 +61,7 @@ export default {
 			if (!isHermesAuthorized(request, env.HERMES_MCP_TOKEN)) {
 				return new Response('Unauthorized', { status: 401, headers: { 'WWW-Authenticate': 'Bearer' } });
 			}
-			return createMcpHandler(() => createHermesMcpServer(env.BUCKET, requestUrl.origin))(request, env, ctx);
+			return createMcpHandler(() => createHermesMcpServer(env.BUCKET, requestUrl.origin))(normalizeMcpAccept(request), env, ctx);
 		}
 
 		if (pathname === '/data') {
@@ -230,6 +230,20 @@ function timingSafeEqual(left: string, right: string) {
 	let difference = 0;
 	for (let index = 0; index < left.length; index += 1) difference |= left.charCodeAt(index) ^ right.charCodeAt(index);
 	return difference === 0;
+}
+
+/**
+ * Older Hermes releases negotiate Streamable HTTP with only one Accept value.
+ * The current MCP handler correctly requires both values, so add the missing
+ * one at the trusted Worker boundary rather than requiring every client to
+ * upgrade before it can use this private server.
+ */
+function normalizeMcpAccept(request: Request) {
+	const accept = request.headers.get('Accept') ?? '';
+	if (accept.includes('application/json') && accept.includes('text/event-stream')) return request;
+	const headers = new Headers(request.headers);
+	headers.set('Accept', 'application/json, text/event-stream');
+	return new Request(request, { headers });
 }
 
 async function ingest(env: Env) {
