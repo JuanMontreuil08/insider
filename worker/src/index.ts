@@ -1,5 +1,5 @@
 import { fetchSanFranciscoAiTikToks } from './tiktok';
-import type { PinCollection, TikTokVideo } from './types';
+import type { PinCollection, TikTokIngestCandidate, TikTokVideo } from './types';
 
 interface Env {
 	BUCKET: R2Bucket;
@@ -14,6 +14,8 @@ const DATE_POSTED = 'this-month' as const;
 const NOTES_PREFIX = 'place-notes/';
 const IMAGE_PREFIX = 'place-note-images/';
 const THUMB_PREFIX = 'thumbs/';
+const TEMP_VIDEO_PREFIX = 'reels-temp/';
+const MEDIA_CACHE_CONCURRENCY = 3;
 
 interface PlaceNote {
 	id: string;
@@ -146,15 +148,19 @@ async function ingest(env: Env) {
 		...(previous?.seenReelIds ?? []),
 		...(previous?.pins.map((p) => p.id) ?? []),
 	]);
-	const newVideos = candidates.filter((c) => !knownIds.has(c.id));
-	await cacheThumbnails(env.BUCKET, newVideos);
+	const newCandidates = candidates.filter((candidate) => !knownIds.has(candidate.video.id));
+	const newVideos = newCandidates.map((candidate) => candidate.video);
+	await Promise.all([
+		cacheThumbnails(env.BUCKET, newVideos),
+		cacheVideos(env.BUCKET, newCandidates),
+	]);
 	const pins = [...(previous?.pins ?? []), ...newVideos];
 	const output: PinCollection = {
 		generatedAt: new Date().toISOString(),
 		query: 'San Francisco AI',
 		datePosted: DATE_POSTED,
 		lastSearchedOn: today,
-		seenReelIds: [...new Set([...knownIds, ...candidates.map((c) => c.id)])],
+		seenReelIds: [...new Set([...knownIds, ...candidates.map((candidate) => candidate.video.id)])],
 		candidates: candidates.length,
 		pins,
 	};
@@ -177,8 +183,7 @@ async function readPins(bucket: R2Bucket): Promise<PinCollection | null> {
 }
 
 async function cacheThumbnails(bucket: R2Bucket, videos: TikTokVideo[]) {
-	await Promise.allSettled(
-		videos.map(async (video) => {
+	await forEachConcurrent(videos, MEDIA_CACHE_CONCURRENCY, async (video) => {
 			if (!video.thumbnailUrl) return;
 			try {
 				const res = await fetch(video.thumbnailUrl, { signal: AbortSignal.timeout(10_000) });
@@ -189,6 +194,33 @@ async function cacheThumbnails(bucket: R2Bucket, videos: TikTokVideo[]) {
 			} catch {
 				// thumbnail download failed — leave thumbnailKey unset
 			}
-		}),
-	);
+	});
+}
+
+async function cacheVideos(bucket: R2Bucket, candidates: TikTokIngestCandidate[]) {
+	await forEachConcurrent(candidates, MEDIA_CACHE_CONCURRENCY, async (candidate) => {
+		if (!candidate.playbackUrl) return;
+		try {
+			const response = await fetch(candidate.playbackUrl, { redirect: 'follow', signal: AbortSignal.timeout(120_000) });
+			if (!response.ok || !response.body) return;
+			await bucket.put(`${TEMP_VIDEO_PREFIX}${candidate.video.id}.mp4`, response.body, {
+				httpMetadata: { contentType: response.headers.get('content-type') ?? 'video/mp4' },
+				customMetadata: { cachedAt: new Date().toISOString(), source: 'scrapecreators' },
+			});
+			candidate.video.videoCached = true;
+		} catch {
+			// Video caching is best-effort: the catalog remains usable if TikTok CDN fails.
+		}
+	});
+}
+
+async function forEachConcurrent<T>(items: T[], concurrency: number, task: (item: T) => Promise<void>) {
+	let nextIndex = 0;
+	async function worker() {
+		while (nextIndex < items.length) {
+			const item = items[nextIndex++];
+			await task(item);
+		}
+	}
+	await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, worker));
 }
