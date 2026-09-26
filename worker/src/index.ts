@@ -16,8 +16,9 @@ interface Env {
 	CF_ACCESS_AUD?: string;
 	MCP_URL?: string;
 	GOOGLE_MAPS_API_KEY?: string;
-	MAPBOX_PUBLIC_TOKEN?: string;
 	GEOAPIFY_API_KEY?: string;
+	CORS_ORIGINS?: string;
+	INGEST_SECRET?: string;
 }
 
 const OUTPUT_KEY = 'sf-ai-tiktok-videos.json';
@@ -30,6 +31,7 @@ const TRANSCRIPT_PREFIX = 'reel-transcripts/';
 const MEDIA_CACHE_CONCURRENCY = 3;
 const TRANSCRIPTION_CONCURRENCY = 2;
 const WHISPER_MODEL = '@cf/openai/whisper-large-v3-turbo' as const;
+const rateLimits = new Map<string, number[]>();
 
 interface PlaceNote {
 	id: string;
@@ -51,10 +53,12 @@ export default {
 	async fetch(request: Request, env: Env, ctx: ExecutionContext) {
 		const requestUrl = new URL(request.url);
 		const { pathname } = requestUrl;
+		const origin = request.headers.get('Origin');
+		const allowedOrigins = new Set((env.CORS_ORIGINS ?? requestUrl.origin).split(',').map((value) => value.trim()).filter(Boolean));
 		const corsHeaders = {
-			'Access-Control-Allow-Origin': '*',
+			...(origin && allowedOrigins.has(origin) ? { 'Access-Control-Allow-Origin': origin, Vary: 'Origin' } : {}),
 			'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
-			'Access-Control-Allow-Headers': 'Content-Type',
+			'Access-Control-Allow-Headers': 'Content-Type, X-Ingest-Secret',
 		};
 
 		if (request.method === 'OPTIONS') {
@@ -124,10 +128,11 @@ export default {
 		}
 
 		if (pathname === '/config' && request.method === 'GET') {
-			return Response.json({ googleMapsKey: env.GOOGLE_MAPS_API_KEY ?? '', mapboxToken: env.MAPBOX_PUBLIC_TOKEN ?? '' }, { headers: { ...corsHeaders, 'Cache-Control': 'no-store' } });
+			return Response.json({ googleMapsKey: env.GOOGLE_MAPS_API_KEY ?? '' }, { headers: { ...corsHeaders, 'Cache-Control': 'no-store' } });
 		}
 
 		if (pathname === '/places' && request.method === 'GET') {
+			if (!allowRequest(request, 'places', 30, 60_000)) return Response.json({ error: 'Too many place searches. Try again shortly.' }, { status: 429, headers: corsHeaders });
 			if (!env.GEOAPIFY_API_KEY) return Response.json({ error: 'Place search is not configured.' }, { status: 503, headers: corsHeaders });
 			const query = new URL(request.url).searchParams.get('q')?.trim() ?? '';
 			if (query.length < 3 || query.length > 100) return Response.json({ places: [] }, { headers: corsHeaders });
@@ -157,6 +162,7 @@ export default {
 		}
 
 		if (pathname === '/notes' && request.method === 'POST') {
+			if (!allowRequest(request, 'notes', 10, 60 * 60_000)) return Response.json({ error: 'Too many notes submitted. Try again later.' }, { status: 429, headers: corsHeaders });
 			if (Number(request.headers.get('content-length') ?? 0) > 5_500_000) return Response.json({ error: 'Photo is too large.' }, { status: 413, headers: corsHeaders });
 			const form = await request.formData();
 			const place = String(form.get('place') ?? '').trim();
@@ -200,7 +206,9 @@ export default {
 			return new Response(obj.body, { headers: { ...corsHeaders, 'Content-Type': 'image/jpeg', 'Cache-Control': 'public, max-age=31536000, immutable' } });
 		}
 
-		if (pathname === '/ingest') {
+		if (pathname === '/ingest' && request.method === 'POST') {
+			if (!env.INGEST_SECRET || request.headers.get('X-Ingest-Secret') !== env.INGEST_SECRET) return Response.json({ error: 'Manual ingestion is unauthorized.' }, { status: 401, headers: corsHeaders });
+			if (!allowRequest(request, 'ingest', 1, 10 * 60_000)) return Response.json({ error: 'Ingestion was triggered recently. Try again later.' }, { status: 429, headers: corsHeaders });
 			const result = await ingest(env);
 			return Response.json(result, { headers: corsHeaders });
 		}
@@ -393,8 +401,8 @@ async function cacheThumbnails(bucket: R2Bucket, videos: TikTokVideo[]) {
 				const key = `${THUMB_PREFIX}${video.id}.jpg`;
 				await bucket.put(key, res.body, { httpMetadata: { contentType: 'image/jpeg' } });
 				video.thumbnailKey = `/thumbs/${video.id}`;
-			} catch {
-				// thumbnail download failed — leave thumbnailKey unset
+			} catch (error) {
+				console.error('Thumbnail caching failed', { reelId: video.id, error: errorMessage(error) });
 			}
 	});
 }
@@ -410,8 +418,8 @@ async function cacheVideos(bucket: R2Bucket, candidates: TikTokIngestCandidate[]
 				customMetadata: { cachedAt: new Date().toISOString(), source: 'scrapecreators' },
 			});
 			candidate.video.videoCached = true;
-		} catch {
-			// Video caching is best-effort: the catalog remains usable if TikTok CDN fails.
+		} catch (error) {
+			console.error('Video caching failed', { reelId: candidate.video.id, error: errorMessage(error) });
 		}
 	});
 }
@@ -460,11 +468,28 @@ async function transcribeVideos(env: Env, candidates: TikTokIngestCandidate[]) {
 			candidate.video.transcriptStatus = status;
 			candidate.video.transcriptLanguage = transcript.language;
 			candidate.video.transcriptWordCount = transcript.wordCount;
-		} catch {
-			// Transcription is best-effort: keep the reel available if audio or AI is unavailable.
+		} catch (error) {
+			console.error('Transcription failed', { reelId: candidate.video.id, error: errorMessage(error) });
 			candidate.video.transcriptStatus = 'failed';
 		}
 	});
+}
+
+function errorMessage(error: unknown) {
+	return error instanceof Error ? error.message : String(error);
+}
+
+function allowRequest(request: Request, bucket: string, limit: number, windowMs: number) {
+	const key = `${bucket}:${request.headers.get('CF-Connecting-IP') ?? request.headers.get('X-Forwarded-For') ?? 'unknown'}`;
+	const now = Date.now();
+	const recent = (rateLimits.get(key) ?? []).filter((timestamp) => now - timestamp < windowMs);
+	if (recent.length >= limit) {
+		rateLimits.set(key, recent);
+		return false;
+	}
+	recent.push(now);
+	rateLimits.set(key, recent);
+	return true;
 }
 
 async function forEachConcurrent<T>(items: T[], concurrency: number, task: (item: T) => Promise<void>) {

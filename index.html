@@ -66,8 +66,9 @@
     <form id="note-form"><p class="drawer-copy">search a place, then share what you remember.</p><label for="google-place-search">Place:</label><div id="place-search"></div><div class="selected-place" id="selected-place" hidden></div><label for="description">Note:</label><textarea class="field" id="description" name="description" maxlength="500" required placeholder="what_made_this_place_memorable"></textarea><p class="char-count"><span id="char-count">0</span>/500</p><label for="image">Photo: <span style="font-weight:400;color:#9aa196">(optional)</span></label><label class="file-upload"><span id="file-label">+ upload_file</span><input id="image" name="image" type="file" accept="image/jpeg,image/png,image/webp"></label><p id="form-status" role="status"></p><button class="primary" type="submit">Publish note →</button></form>
   </aside>
   <script>
-    const API = 'https://insider-ingest.juanmontreuil71.workers.dev';
-    const CONFIG_API = ['localhost','127.0.0.1'].includes(location.hostname) ? '' : API;
+    const LOCAL_HOST = ['localhost','127.0.0.1'].includes(location.hostname);
+    const API = LOCAL_HOST ? '' : location.origin;
+    const CONFIG_API = LOCAL_HOST ? '' : API;
     const drawer = document.getElementById('note-drawer'), backdrop = document.getElementById('drawer-backdrop');
     const form = document.getElementById('note-form'), status = document.getElementById('form-status');
     const count = document.getElementById('note-count'), selectedBox = document.getElementById('selected-place');
@@ -81,12 +82,33 @@
       noteIndex = ((index % notes.length) + notes.length) % notes.length;
       const note = notes[noteIndex];
       const coords = new Date(note.createdAt).toLocaleDateString('en-US',{year:'numeric',month:'short',day:'numeric'});
-      let html = `<p class="note-meta">${coords}</p><p class="note-location"><span>${note.place}</span>`;
-      if (note.address) html += `<span class="note-address">${note.address}</span>`;
-      html += `</p>`;
-      if (note.imageUrl) html += `<img class="note-photo" src="${imageUrl(note.imageUrl)}" alt="${note.place}">`;
-      html += `<p class="note-body">${note.description}</p>`;
-      panelContent.innerHTML = html;
+      const meta = document.createElement('p');
+      meta.className = 'note-meta';
+      meta.textContent = coords;
+      const location = document.createElement('p');
+      location.className = 'note-location';
+      const place = document.createElement('span');
+      place.textContent = note.place;
+      location.append(place);
+      if (note.address) {
+        const address = document.createElement('span');
+        address.className = 'note-address';
+        address.textContent = note.address;
+        location.append(address);
+      }
+      const content = [meta, location];
+      if (note.imageUrl) {
+        const image = document.createElement('img');
+        image.className = 'note-photo';
+        image.src = imageUrl(note.imageUrl);
+        image.alt = note.place;
+        content.push(image);
+      }
+      const body = document.createElement('p');
+      body.className = 'note-body';
+      body.textContent = note.description;
+      content.push(body);
+      panelContent.replaceChildren(...content);
       if (map) smoothPan({lat:note.lat,lng:note.lng});
       if (!note.address && (Place || Geocoder)) resolveAddress(note);
     }

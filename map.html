@@ -58,7 +58,7 @@
     const connectHermes = document.getElementById('connect-hermes');
     const hermesDialog = document.getElementById('hermes-dialog');
     const hermesConfig = document.getElementById('hermes-config');
-    const API = location.hostname === '127.0.0.1' ? 'https://insider-ingest.juanmontreuil71.workers.dev' : location.origin;
+    const API = ['localhost','127.0.0.1'].includes(location.hostname) ? '' : location.origin;
     search.value = new URLSearchParams(location.search).get('q') || '';
     let reels = [];
     let assignedReels = new Set();
@@ -83,7 +83,7 @@
 
     function render() {
       const query = search.value.trim().toLocaleLowerCase();
-      const matches = reels.filter((reel) => [reel.caption, reel.username, reel.location?.name || ''].some((value) => value.toLocaleLowerCase().includes(query)));
+      const matches = reels.filter((reel) => [reel.caption, reel.username].some((value) => value.toLocaleLowerCase().includes(query)));
       resultCount.textContent = `${matches.length} video${matches.length === 1 ? '' : 's'}${query ? ' matching your search' : ''}`;
       results.replaceChildren(...matches.map(reelCard));
       if (!matches.length) results.append(textElement('p', 'empty', 'No videos match this search.'));
@@ -107,7 +107,7 @@
       copy.append(footer);
       card.append(copy);
       const thumbSrc = reel.thumbnailKey
-        ? `https://insider-ingest.juanmontreuil71.workers.dev${reel.thumbnailKey}`
+        ? `${API}${reel.thumbnailKey}`
         : reel.thumbnailUrl;
       if (thumbSrc) {
         const image = document.createElement('img');
