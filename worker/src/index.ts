@@ -1,10 +1,7 @@
 import { Buffer } from 'node:buffer';
-import { McpServer } from '@modelcontextprotocol/server';
-import { createMcpHandler } from 'agents/mcp/server';
 import { fetchSanFranciscoAiTikToks } from './tiktok';
 import type { PinCollection, ReelTranscript, TikTokIngestCandidate, TikTokVideo } from './types';
-import { z } from 'zod';
-import { createPersonalToken, hashToken, requireCurrentUser, type CurrentUser } from './auth';
+import { requireCurrentUser } from './auth';
 
 interface Env {
 	BUCKET: R2Bucket;
@@ -20,6 +17,7 @@ interface Env {
 	GEOAPIFY_API_KEY?: string;
 	CORS_ORIGINS?: string;
 	INGEST_SECRET?: string;
+	MCP_INTERNAL_SECRET?: string;
 }
 
 const OUTPUT_KEY = 'sf-ai-tiktok-videos.json';
@@ -66,31 +64,16 @@ export default {
 			return new Response(null, { headers: corsHeaders });
 		}
 
-		if (pathname === '/mcp') {
-			const user = await getMcpUser(request, env);
-			if (!user) {
-				return new Response('Unauthorized', { status: 401, headers: { 'WWW-Authenticate': 'Bearer' } });
-			}
-			return createMcpHandler(() => createHermesMcpServer(env.BUCKET, env.DB, env.PUBLIC_ORIGIN ?? requestUrl.origin, user.id))(request, env, ctx);
-		}
+
+		if (pathname === '/internal/mcp/session' && request.method === 'POST') return activateMcpConnection(request, env);
+		if (pathname === '/internal/mcp/tool' && request.method === 'POST') return handleInternalMcpTool(request, env, env.PUBLIC_ORIGIN ?? requestUrl.origin);
 
 		if (pathname === '/me' && request.method === 'GET') {
 			const user = await requireCurrentUser(request, env);
 			if (!user) return unauthorizedJson(corsHeaders);
 			const assigned = await env.DB.prepare('SELECT COUNT(*) AS count FROM reel_assignments WHERE user_id = ? AND viewed_at IS NULL').bind(user.id).first<{ count: number }>();
-			const mcpToken = await env.DB.prepare('SELECT 1 FROM mcp_tokens WHERE user_id = ? AND revoked_at IS NULL LIMIT 1').bind(user.id).first();
-			return Response.json({ email: user.email, newAssignments: assigned?.count ?? 0, hermesEnabled: Boolean(mcpToken) }, { headers: corsHeaders });
-		}
-
-		if (pathname === '/me/mcp-tokens' && request.method === 'POST') {
-			const user = await requireCurrentUser(request, env);
-			if (!user) return unauthorizedJson(corsHeaders);
-			const token = createPersonalToken();
-			await env.DB.batch([
-				env.DB.prepare("UPDATE mcp_tokens SET revoked_at = datetime('now') WHERE user_id = ? AND revoked_at IS NULL").bind(user.id),
-				env.DB.prepare('INSERT INTO mcp_tokens (id, user_id, token_hash) VALUES (?, ?, ?)').bind(crypto.randomUUID(), user.id, await hashToken(token)),
-			]);
-			return Response.json({ token, mcpUrl: env.MCP_URL ?? `${requestUrl.origin}/mcp` }, { status: 201, headers: { ...corsHeaders, 'Cache-Control': 'no-store' } });
+			const connection = await env.DB.prepare('SELECT 1 FROM hermes_connections WHERE user_id = ? LIMIT 1').bind(user.id).first();
+			return Response.json({ email: user.email, newAssignments: assigned?.count ?? 0, hermesEnabled: Boolean(connection) }, { headers: corsHeaders });
 		}
 
 		if (pathname === '/me/assignments' && request.method === 'GET') {
@@ -103,8 +86,8 @@ export default {
 		if (pathname === '/me/assignments' && request.method === 'POST') {
 			const user = await requireCurrentUser(request, env);
 			if (!user) return unauthorizedJson(corsHeaders);
-			const mcpToken = await env.DB.prepare('SELECT 1 FROM mcp_tokens WHERE user_id = ? AND revoked_at IS NULL LIMIT 1').bind(user.id).first();
-			if (!mcpToken) return Response.json({ error: 'Set up Hermes before assigning Reels.' }, { status: 409, headers: corsHeaders });
+			const connection = await env.DB.prepare('SELECT 1 FROM hermes_connections WHERE user_id = ? LIMIT 1').bind(user.id).first();
+			if (!connection) return Response.json({ error: 'Connect Hermes before assigning Reels.' }, { status: 409, headers: corsHeaders });
 			const body = await request.json<{ reelId?: unknown }>().catch(() => null);
 			const reelId = typeof body?.reelId === 'string' ? body.reelId : '';
 			if (!/^\d+$/.test(reelId)) return Response.json({ error: 'A numeric reelId is required.' }, { status: 400, headers: corsHeaders });
@@ -221,102 +204,57 @@ export default {
 	},
 };
 
-/**
- * A stateless remote MCP server. Keeping the catalog and R2 reads inside the
- * Worker means the MCP client never receives an R2 credential or object key.
- */
-function createHermesMcpServer(bucket: R2Bucket, db: D1Database, origin: string, userId: string) {
-	const server = new McpServer({ name: 'insider-reels', version: '1.0.0' });
-	server.registerTool(
-		'insider_get_my_new_reels',
-		{
-			description: 'Get the current user\'s newly assigned Insider TikTok reels, including their private Whisper transcripts. Use this when the user asks to summarize, review, or analyze their new Insider reels.',
-			inputSchema: { limit: z.number().int().min(1).max(10).default(10) },
-		},
-		async ({ limit }) => {
-			const assigned = await getNewAssignments(db, userId, limit);
-			if (!assigned.length) return { content: [{ type: 'text' as const, text: JSON.stringify({ reels: [], message: 'No newly assigned Insider reels.' }) }] };
-			const collection = await readPins(bucket);
-			const byId = new Map(collection?.pins.map((pin) => [pin.id, pin]) ?? []);
-			const reels = await Promise.all(assigned.map(async (reelId) => reelPayload(bucket, origin, byId.get(reelId))));
-			return { content: [{ type: 'text' as const, text: JSON.stringify({ reels: reels.filter(Boolean) }) }] };
-		},
-	);
-	server.registerTool(
-		'insider_mark_reels_viewed',
-		{
-			description: 'Mark assigned Insider reels as viewed after completing the user\'s requested review. Do not call this until the analysis has been delivered.',
-			inputSchema: { reelIds: z.array(z.string().regex(/^\d+$/)).min(1).max(10) },
-		},
-		async ({ reelIds }) => {
-			await Promise.all(reelIds.map((reelId) => markAssignmentViewed(db, userId, reelId)));
-			return { content: [{ type: 'text' as const, text: 'Marked assigned reels as viewed.' }] };
-		},
-	);
-	server.registerTool(
-		'insider_get_reel',
-		{
-			description: 'Get a TikTok reel curated by Insider, including its caption, metadata, Whisper transcript, language, and timestamped segments. Use it before summarizing a reel for the user.',
-			inputSchema: { reelId: z.string().regex(/^\d+$/, 'reelId must be a numeric TikTok video ID') },
-		},
-		async ({ reelId }) => {
-			if (!await hasAssignment(db, userId, reelId)) return { isError: true, content: [{ type: 'text' as const, text: 'That reel is not assigned to this user.' }] };
-			const collection = await readPins(bucket);
-			const reel = collection?.pins.find((pin) => pin.id === reelId);
-			if (!reel) {
-				return { isError: true, content: [{ type: 'text' as const, text: `No Insider reel exists with ID ${reelId}.` }] };
-			}
-
-			const transcriptObject = await bucket.get(`${TRANSCRIPT_PREFIX}${reelId}.json`);
-			const transcript = transcriptObject ? await transcriptObject.json<ReelTranscript>() : null;
-			const payload = {
-				reel: {
-					id: reel.id,
-					platform: reel.platform,
-					url: reel.url,
-					username: reel.username,
-					caption: reel.caption,
-					publishedAt: reel.publishedAt,
-					likeCount: reel.likeCount,
-					commentCount: reel.commentCount,
-					thumbnailUrl: reel.thumbnailKey ? `${origin}${reel.thumbnailKey}` : null,
-					video: {
-						durationSeconds: reel.videoDurationSeconds ?? null,
-						width: reel.videoWidth ?? null,
-						height: reel.videoHeight ?? null,
-						cachedForOneDay: reel.videoCached === true,
-						originalUrl: reel.url,
-					},
-				},
-				transcript: transcript ? {
-					status: transcript.status,
-					language: transcript.language,
-					text: transcript.text,
-					segments: transcript.segments,
-					generatedAt: transcript.generatedAt,
-				} : {
-					status: reel.transcriptStatus ?? 'unavailable',
-					language: reel.transcriptLanguage ?? null,
-					text: null,
-					segments: [],
-					generatedAt: null,
-				},
-			};
-
-			return { content: [{ type: 'text' as const, text: JSON.stringify(payload) }] };
-		},
-	);
-	return server;
+async function activateMcpConnection(request: Request, env: Env) {
+	if (!hasInternalMcpSecret(request, env)) return new Response('Not found', { status: 404 });
+	const body = await request.json<{ accessSubject?: unknown; email?: unknown }>().catch(() => null);
+	const accessSubject = typeof body?.accessSubject === 'string' ? body.accessSubject : '';
+	const email = typeof body?.email === 'string' ? body.email.trim().toLowerCase() : '';
+	if (!accessSubject || accessSubject.length > 255 || !email || email.length > 255) return Response.json({ error: 'Invalid identity.' }, { status: 400 });
+	await env.DB.batch([
+		env.DB.prepare('INSERT OR IGNORE INTO users (id, access_subject, email) VALUES (?, ?, ?)').bind(crypto.randomUUID(), accessSubject, email),
+		env.DB.prepare('UPDATE users SET email = ? WHERE access_subject = ?').bind(email, accessSubject),
+	]);
+	const user = await env.DB.prepare('SELECT id FROM users WHERE access_subject = ?').bind(accessSubject).first<{ id: string }>();
+	if (!user) return Response.json({ error: 'User was not created.' }, { status: 500 });
+	await env.DB.prepare("INSERT INTO hermes_connections (user_id, connected_at, updated_at) VALUES (?, datetime('now'), datetime('now')) ON CONFLICT(user_id) DO UPDATE SET updated_at = datetime('now')").bind(user.id).run();
+	return Response.json({ userId: user.id });
 }
 
-async function getMcpUser(request: Request, env: Env): Promise<CurrentUser | null> {
-	const authorization = request.headers.get('Authorization');
-	if (!authorization?.startsWith('Bearer ')) return null;
-	const token = authorization.slice('Bearer '.length);
-	const tokenHash = await hashToken(token);
-	const tokenRow = await env.DB.prepare('SELECT user_id AS id FROM mcp_tokens WHERE token_hash = ? AND revoked_at IS NULL').bind(tokenHash).first<{ id: string }>();
-	if (!tokenRow) return null;
-	return env.DB.prepare('SELECT id, email FROM users WHERE id = ?').bind(tokenRow.id).first<CurrentUser>();
+async function handleInternalMcpTool(request: Request, env: Env, origin: string) {
+	if (!hasInternalMcpSecret(request, env)) return new Response('Not found', { status: 404 });
+	const body = await request.json<{ userId?: unknown; tool?: unknown; input?: unknown }>().catch(() => null);
+	const userId = typeof body?.userId === 'string' ? body.userId : '';
+	const tool = typeof body?.tool === 'string' ? body.tool : '';
+	if (!userId) return Response.json({ error: 'Invalid user.' }, { status: 400 });
+	if (tool === 'new-reels') {
+		const limit = typeof (body?.input as { limit?: unknown } | null)?.limit === 'number' ? (body!.input as { limit: number }).limit : 10;
+		if (!Number.isInteger(limit) || limit < 1 || limit > 10) return Response.json({ error: 'Invalid limit.' }, { status: 400 });
+		const assigned = await getNewAssignments(env.DB, userId, limit);
+		const collection = await readPins(env.BUCKET);
+		const byId = new Map(collection?.pins.map((pin) => [pin.id, pin]) ?? []);
+		const reels = await Promise.all(assigned.map((reelId) => reelPayload(env.BUCKET, origin, byId.get(reelId))));
+		return Response.json({ payload: { reels: reels.filter(Boolean), ...(assigned.length ? {} : { message: 'No newly assigned Insider reels.' }) } });
+	}
+	if (tool === 'mark-viewed') {
+		const reelIds = (body?.input as { reelIds?: unknown } | null)?.reelIds;
+		if (!Array.isArray(reelIds) || !reelIds.length || reelIds.length > 10 || reelIds.some((id) => typeof id !== 'string' || !/^\d+$/.test(id))) return Response.json({ error: 'Invalid reel IDs.' }, { status: 400 });
+		await Promise.all(reelIds.map((reelId) => markAssignmentViewed(env.DB, userId, reelId)));
+		return Response.json({ payload: { message: 'Marked assigned reels as viewed.' } });
+	}
+	if (tool === 'get-reel') {
+		const reelId = (body?.input as { reelId?: unknown } | null)?.reelId;
+		if (typeof reelId !== 'string' || !/^\d+$/.test(reelId)) return Response.json({ error: 'Invalid reel ID.' }, { status: 400 });
+		if (!await hasAssignment(env.DB, userId, reelId)) return Response.json({ error: 'That reel is not assigned to this user.' }, { status: 403 });
+		const collection = await readPins(env.BUCKET);
+		const reel = collection?.pins.find((pin) => pin.id === reelId);
+		if (!reel) return Response.json({ error: 'No Insider reel exists with that ID.' }, { status: 404 });
+		return Response.json({ payload: await reelPayload(env.BUCKET, origin, reel) });
+	}
+	return Response.json({ error: 'Unknown MCP tool.' }, { status: 400 });
+}
+
+function hasInternalMcpSecret(request: Request, env: Env) {
+	return Boolean(env.MCP_INTERNAL_SECRET) && request.headers.get('X-MCP-Internal-Secret') === env.MCP_INTERNAL_SECRET;
 }
 
 async function getNewAssignments(db: D1Database, userId: string, limit: number) {

@@ -1,0 +1,19 @@
+{
+  "name": "insider-mcp",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check:types": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@cloudflare/workers-oauth-provider": "^1.1.0",
+    "@modelcontextprotocol/server": "^2.0.0",
+    "agents": "^0.24.0",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260918.0",
+    "typescript": "^5.9.3",
+    "wrangler": "^4.0.0"
+  }
+}

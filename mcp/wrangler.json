@@ -1,11 +1,25 @@
 {
 	"name": "insider-mcp",
 	"main": "src/index.ts",
-	"compatibility_date": "2024-12-01",
+	"compatibility_date": "2025-06-01",
+	"compatibility_flags": ["nodejs_compat"],
 	"services": [
 		{
 			"binding": "INSIDER",
 			"service": "insider-ingest"
 		}
-	]
+	],
+	"kv_namespaces": [
+		{
+			"binding": "OAUTH_KV",
+			"id": "b69f94b8d3764255a0ce870ce3ce88ba"
+		}
+	],
+	"vars": {
+		"ACCESS_CLIENT_ID": "2c8b05fa17a7682531c364c98f7d88066352cf9743466f0ce77efb8397dc37b8",
+		"ACCESS_TOKEN_URL": "https://white-paper-70e3.cloudflareaccess.com/cdn-cgi/access/sso/oidc/2c8b05fa17a7682531c364c98f7d88066352cf9743466f0ce77efb8397dc37b8/token",
+		"ACCESS_AUTHORIZATION_URL": "https://white-paper-70e3.cloudflareaccess.com/cdn-cgi/access/sso/oidc/2c8b05fa17a7682531c364c98f7d88066352cf9743466f0ce77efb8397dc37b8/authorization",
+		"ACCESS_USERINFO_URL": "https://white-paper-70e3.cloudflareaccess.com/cdn-cgi/access/sso/oidc/2c8b05fa17a7682531c364c98f7d88066352cf9743466f0ce77efb8397dc37b8/userinfo",
+		"PUBLIC_ORIGIN": "https://insider-mcp.juanmontreuil71.workers.dev"
+	}
 }
