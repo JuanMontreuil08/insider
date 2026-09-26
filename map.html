@@ -26,6 +26,14 @@
     .reel-caption { margin: 0; white-space: pre-line; overflow-wrap: anywhere; font-size: 15px; line-height: 1.5; }
     .reel-footer { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 18px; margin-top: 18px; font-size: 13px; }
     .reel-footer a { color: var(--ink); text-decoration: none; border-bottom: 1px solid var(--accent); }
+    .hermes { appearance:none; border:1px solid var(--accent); border-radius:999px; background:#fff; color:var(--accent); cursor:pointer; font:600 12px/1 Arial,Helvetica,sans-serif; padding:7px 10px; }
+    .hermes[aria-pressed="true"] { background:var(--accent); color:#fff; }
+    .hermes:disabled { cursor:wait; opacity:.6; }
+    .account { display:flex; align-items:center; gap:10px; color:var(--muted); font-size:12px; }
+    .account button { appearance:none; border:0; border-bottom:1px solid var(--accent); background:transparent; color:var(--ink); cursor:pointer; padding:0; font:inherit; }
+    dialog { width:min(100% - 32px,620px); border:1px solid var(--line); border-radius:12px; padding:24px; color:var(--ink); }
+    dialog::backdrop { background:rgba(0,0,0,.35); }
+    dialog pre { overflow:auto; padding:14px; background:#f1f2ee; font-size:12px; }
     .reel-thumb { width: 100%; max-height: 220px; object-fit: cover; border-radius: 2px; background: #eee; }
     .empty { padding: 28px 0; color: var(--muted); font-size: 15px; }
     @media (max-width: 640px) { .page { width: min(100% - 32px, 980px); padding-top: 36px; } .reel { grid-template-columns: 1fr; padding: 18px; } .reel-thumb { order: -1; max-height: 240px; } .search { font-size: 16px; } }
@@ -33,7 +41,7 @@
 </head>
 <body>
   <main class="page">
-    <div class="top"><a class="brand" href="/">insider<span>.</span></a><a class="back" href="/">← Back to the city map</a></div>
+    <div class="top"><a class="brand" href="/">insider<span>.</span></a><div class="account"><span id="account-status">Loading account…</span><button id="connect-hermes" type="button">Connect Hermes</button><a class="back" href="/">← Back to the city map</a></div></div>
     <h1>Explore the conversation.</h1>
     <p class="intro">TikTok videos and stories from San Francisco’s tech scene.</p>
     <label class="search-label" for="search">Search captions</label>
@@ -41,20 +49,35 @@
     <p class="result-count" id="result-count" role="status">Loading videos…</p>
     <div class="results" id="results"></div>
   </main>
+  <dialog id="hermes-dialog"><form method="dialog"><button aria-label="Close">Close</button></form><h2>Connect Hermes</h2><p>Copy this once into your Hermes configuration. Your token is shown only now.</p><pre id="hermes-config"></pre></dialog>
   <script>
     const search = document.getElementById('search');
     const results = document.getElementById('results');
     const resultCount = document.getElementById('result-count');
+    const accountStatus = document.getElementById('account-status');
+    const connectHermes = document.getElementById('connect-hermes');
+    const hermesDialog = document.getElementById('hermes-dialog');
+    const hermesConfig = document.getElementById('hermes-config');
+    const API = location.hostname === '127.0.0.1' ? 'https://insider-ingest.juanmontreuil71.workers.dev' : location.origin;
     search.value = new URLSearchParams(location.search).get('q') || '';
     let reels = [];
+    let assignedReels = new Set();
+    let signedIn = false;
 
-    fetch('https://insider-ingest.juanmontreuil71.workers.dev/data')
+    fetch(`${API}/data`)
       .then((response) => { if (!response.ok) throw new Error('Could not load Reels'); return response.json(); })
       .then((data) => {
         reels = data.pins.slice().sort((a, b) => Date.parse(b.publishedAt) - Date.parse(a.publishedAt));
         render();
       })
       .catch(() => { resultCount.textContent = 'Could not load the video catalog.'; });
+
+    fetch(`${API}/me`)
+      .then((response) => response.ok ? response.json() : Promise.reject())
+      .then((account) => { signedIn = true; accountStatus.textContent = `${account.email} · ${account.newAssignments} new`; return fetch(`${API}/me/assignments`); })
+      .then((response) => response.ok ? response.json() : Promise.reject())
+      .then(({ assignments }) => { assignedReels = new Set(assignments.map((assignment) => assignment.reelId)); render(); })
+      .catch(() => { accountStatus.textContent = 'Sign in required'; connectHermes.hidden = true; });
 
     search.addEventListener('input', () => { history.replaceState(null, '', search.value.trim() ? `?q=${encodeURIComponent(search.value.trim())}` : location.pathname); render(); });
 
@@ -75,6 +98,12 @@
       const footer = textElement('div', 'reel-footer');
       const isTikTok = reel.platform === 'tiktok';
       footer.append(link(`@${reel.username}`, isTikTok ? `https://www.tiktok.com/@${encodeURIComponent(reel.username)}` : `https://www.instagram.com/${encodeURIComponent(reel.username)}/`), link(isTikTok ? 'View TikTok ↗' : 'View Reel ↗', reel.url));
+      const assign = document.createElement('button');
+      assign.type = 'button'; assign.className = 'hermes'; assign.dataset.reelId = reel.id;
+      assign.setAttribute('aria-pressed', String(assignedReels.has(reel.id)));
+      assign.textContent = assignedReels.has(reel.id) ? 'Hermes assigned ✓' : 'Assign to Hermes';
+      assign.addEventListener('click', () => toggleAssignment(reel.id, assign));
+      footer.append(assign);
       copy.append(footer);
       card.append(copy);
       const thumbSrc = reel.thumbnailKey
@@ -94,6 +123,29 @@
     function textElement(tag, className, value = '') { const node = document.createElement(tag); node.className = className; node.textContent = value; return node; }
     function link(label, href) { const node = document.createElement('a'); node.href = href; node.target = '_blank'; node.rel = 'noreferrer'; node.textContent = label; return node; }
     function formatDate(value) { return new Date(value).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }); }
+
+    async function toggleAssignment(reelId, button) {
+      if (!signedIn) return;
+      const assigned = assignedReels.has(reelId); button.disabled = true;
+      try {
+        const response = await fetch(assigned ? `${API}/me/assignments/${reelId}` : `${API}/me/assignments`, assigned ? { method: 'DELETE' } : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reelId }) });
+        if (!response.ok) throw new Error('Could not update assignment');
+        assigned ? assignedReels.delete(reelId) : assignedReels.add(reelId);
+        render();
+      } catch { button.disabled = false; alert('Could not update this Hermes assignment. Please try again.'); }
+    }
+
+    connectHermes.addEventListener('click', async () => {
+      connectHermes.disabled = true;
+      try {
+        const response = await fetch(`${API}/me/mcp-tokens`, { method: 'POST' });
+        if (!response.ok) throw new Error('Could not create token');
+        const { token, mcpUrl } = await response.json();
+        hermesConfig.textContent = `mcp_servers:\n  insider_reels:\n    url: "${mcpUrl}"\n    headers:\n      Authorization: "Bearer ${token}"\n    enabled: true\n    timeout: 120\n    connect_timeout: 60\n    skip_preflight: true`;
+        hermesDialog.showModal();
+      } catch { alert('Could not connect Hermes. Please try again.'); }
+      finally { connectHermes.disabled = false; }
+    });
   </script>
 </body>
 </html>

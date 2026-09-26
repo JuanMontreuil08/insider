@@ -11,8 +11,22 @@
 			"bucket_name": "insider-data"
 		}
 	],
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "insider-users",
+			"database_id": "7a31ab38-5694-40ac-af99-2ebf519e73a0",
+			"migrations_dir": "migrations"
+		}
+	],
 	"ai": {
 		"binding": "AI"
+	},
+	"assets": {
+		"directory": "../dist/site",
+		"binding": "ASSETS",
+		"html_handling": "drop-trailing-slash",
+		"run_worker_first": true
 	},
 	"compatibility_flags": ["nodejs_compat"]
 }

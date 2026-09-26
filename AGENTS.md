@@ -11,7 +11,8 @@ Insider — a San Francisco discovery site with TikTok video search and communit
 - **ScrapeCreators API** — fetches TikTok videos matching "San Francisco AI" (this-month window).
 - **tinyld** — deterministic language detection; filters out non-English/non-Spanish captions during ingestion.
 - **Google Maps JavaScript API + Places API (New)** — 2D community map and place autocomplete in the note drawer. The map starts centered on San Francisco; place search and note locations are not geographically restricted.
-- **Static site Worker** (`wrangler.site.json`) — serves the home page and TikTok results page.
+- **Cloudflare D1** (`insider-users`) — stores Cloudflare Access users, one active personal MCP token per user, and their reel assignments.
+- **Authenticated site assets** — the main Worker serves the home page and TikTok results page from `dist/site`, so browser API calls share the signed-in origin.
 
 ## Layout
 
@@ -23,19 +24,20 @@ Insider — a San Francisco discovery site with TikTok video search and communit
 - `index.html` — home page, Google map, place search, and sliding note panel.
 - `map.html` — results page for browsing curated Reels; accepts the home search query.
 - `dev-server.mjs` — local static preview and local `/config` endpoint.
-- `wrangler.site.json` — static site deployment config.
+- `worker/migrations/0001_hermes_assignments.sql` — D1 schema for users, MCP tokens, and reel assignments.
 
 ## Commands
 
 - `cd worker && npx wrangler deploy` — deploy the worker.
 - `cd worker && npx wrangler tail` — stream live logs.
 - `curl -X POST https://insider-ingest.juanmontreuil71.workers.dev/ingest` — manual trigger.
-- `curl -X POST https://insider-ingest.juanmontreuil71.workers.dev/mcp ...` — MCP protocol endpoint; it requires `Authorization: Bearer <HERMES_MCP_TOKEN>` and a valid JSON-RPC body.
+- `curl -X POST https://insider-ingest.juanmontreuil71.workers.dev/mcp ...` — MCP protocol endpoint; it requires a personal bearer token created by the signed-in user and a valid JSON-RPC body.
 - `cd worker && npx wrangler r2 object get insider-data/sf-ai-tiktok-videos.json --file=output.json --remote` — download the active TikTok dataset.
 - `npm run check:types` — typecheck root project.
 - `npm run dev:site` — local preview at `http://127.0.0.1:4173/`; Node loads the root `.env` at runtime. Do not print or inspect the key.
 - `npm run build:site` — copy both pages into `dist/site` before deploying the static site.
-- `worker/node_modules/.bin/wrangler deploy --config wrangler.site.json` — deploy the static site from the repository root after building it.
+- `cd worker && npx wrangler d1 migrations apply insider-users --remote` — apply D1 schema changes.
+- `npm run build:site && cd worker && npx wrangler deploy` — build and deploy the site plus API from one Worker.
 
 ## Data flow
 
@@ -55,64 +57,33 @@ Insider — a San Francisco discovery site with TikTok video search and communit
 - Transcript states are `ready`, `no_speech`, `unavailable`, and `failed`. Treat `text` and timestamped `segments` as the quality signal. Do not use `wordCount` to decide quality, especially for non-English languages.
 - A missing/failed transcript never blocks a reel from appearing in the catalog: transcription is best-effort.
 
-## Hermes MCP (validated single-user prototype)
+## Hermes MCP and personal assignments
 
 `POST https://insider-ingest.juanmontreuil71.workers.dev/mcp` is a standard stateless Streamable HTTP MCP endpoint. It uses the Cloudflare Agents `createMcpHandler`; it is not an SSE-only custom server.
 
-The only tool is `insider_get_reel` with a numeric TikTok `reelId`. It returns the catalog metadata, original TikTok URL, durable thumbnail URL, and the private Whisper transcript with segments. It never returns R2 credentials, private object keys, or a direct temporary MP4 URL.
+Users create a personal MCP token once from the signed-in Reel page. `insider_get_my_new_reels` returns their assigned reels and private transcripts; `insider_mark_reels_viewed` clears completed work. `insider_get_reel` requires that the reel is assigned to the requesting user. No tool returns R2 credentials, private object keys, or a direct temporary MP4 URL.
 
-### Cloudflare setup
+The site is behind Cloudflare Access. The Worker verifies `Cf-Access-Jwt-Assertion` against the configured Access team JWKS, audience, issuer, expiry, and not-before claims before it creates or reads user assignments. Configure `CF_ACCESS_TEAM_DOMAIN` and `CF_ACCESS_AUD` as Worker environment values and protect browser routes at the Cloudflare edge. The `/mcp` route must remain reachable with its personal bearer token.
 
-1. Set the Worker secret without committing or printing it:
+Each signed-in user can assign reels in the UI. D1 writes the assignment before the UI confirms success, so the user may immediately ask Hermes to inspect their new reels. D1 is deliberately queried from its primary for this read-after-write path.
 
-   ```bash
-   cd worker && npx wrangler secret put HERMES_MCP_TOKEN
-   ```
+### User connection
 
-2. Deploy the Worker:
+1. The user signs in before entering Insider.
+2. In the Reel page they select **Connect Hermes** and copy the generated configuration. The raw token appears only in that response and D1 stores only its SHA-256 hash.
+3. Creating a new connection token revokes the user's earlier token. Never expose it to browsers after the initial connection dialog, R2, or Git.
 
-   ```bash
-   cd worker && npx wrangler deploy
-   ```
-
-### Hermes VPS setup and validation
-
-On the Hermes host, save the same token in `~/.hermes/.env` with permissions `600`; do not put the token in `config.yaml` or commit it.
-
-```yaml
-mcp_servers:
-  insider_reels:
-    url: "https://insider-ingest.juanmontreuil71.workers.dev/mcp"
-    headers:
-      Authorization: "Bearer ${INSIDER_HERMES_MCP_TOKEN}"
-    enabled: true
-    timeout: 120
-    connect_timeout: 60
-    skip_preflight: true
-```
-
-Commands used for the successful validation:
-
-```bash
-chmod 700 ~/.hermes
-chmod 600 ~/.hermes/.env
-hermes mcp test insider_reels
-hermes chat
-```
-
-The expected test result is `Connected` and `Tools discovered: 1`, showing `insider_get_reel`. A successful end-to-end prompt is:
+The expected test result is `Connected` and tools discovered include `insider_get_my_new_reels`. A successful end-to-end prompt is:
 
 ```text
-Usa insider_get_reel para revisar el reel 7688494746121080094.
-Resume su contenido en español en 4 viñetas e indica idioma y si detectaste voz.
+Resume mis reels nuevos de Insider en español en 4 viñetas cada uno e indica idioma y si detectaste voz.
 ```
 
-### MCP troubleshooting learned during validation
+### MCP troubleshooting
 
-- Hermes MCP `HTTP 400` can originate at the Cloudflare edge before the Worker. First verify the exact token, not the MCP implementation.
-- Safely compare token copies by hashing the original local token file and the value stored in `~/.hermes/.env`; the hashes must match. Never paste the token into a terminal transcript.
-- The confirmed incident was a mismatched VPS token. After securely replacing it with the same token held by the Worker secret, `hermes mcp test insider_reels` connected in about 1.2 seconds and discovered the tool.
-- A direct authenticated JSON-RPC `initialize`/`tools/call` request from the development machine also returned HTTP 200, confirming the endpoint is compatible with current Hermes.
+- Hermes MCP `HTTP 400` can originate at the Cloudflare edge before the Worker. Verify the personal token and that the Access policy bypasses `/mcp` before changing MCP code.
+- A token replacement deliberately revokes the older Hermes configuration. Generate a new configuration block if an existing connection returns `401`.
+- A direct authenticated JSON-RPC `initialize`/`tools/call` request from the development machine returned HTTP 200 during the original single-user prototype validation.
 
 ## Community notes
 
@@ -129,4 +100,6 @@ TikTok discovery is not geographically filtered; language detection keeps only E
 - `SCRAPE_API_KEY` — ScrapeCreators API key.
 - `GOOGLE_MAPS_API_KEY` — browser key for Maps JavaScript API and Places API (New). Currently available in the local environment; configure it on the deployed Worker before publishing the new home page.
 - `MAPBOX_PUBLIC_TOKEN` and `GEOAPIFY_API_KEY` — retained for compatibility with the currently deployed older static site until the Google Maps site is deployed.
-- `HERMES_MCP_TOKEN` — bearer token for the temporary single-user Hermes MCP prototype. It must be a Cloudflare Worker secret and a value in the individual Hermes host's `~/.hermes/.env`; never expose it to browsers, R2, or Git.
+- `CF_ACCESS_TEAM_DOMAIN` — Cloudflare Access team domain used to validate browser-session JWTs.
+- `CF_ACCESS_AUD` — Cloudflare Access application audience used to validate browser-session JWTs.
+- `MCP_URL` — optional public MCP URL shown in the user connection dialog. Use it when `/mcp` has a separate hostname.

@@ -4,13 +4,17 @@ import { createMcpHandler } from 'agents/mcp/server';
 import { fetchSanFranciscoAiTikToks } from './tiktok';
 import type { PinCollection, ReelTranscript, TikTokIngestCandidate, TikTokVideo } from './types';
 import { z } from 'zod';
+import { createPersonalToken, hashToken, requireCurrentUser, type CurrentUser } from './auth';
 
 interface Env {
 	BUCKET: R2Bucket;
+	DB: D1Database;
+	ASSETS: Fetcher;
 	AI: Ai;
 	SCRAPE_API_KEY: string;
-	/** A single-user bearer token used only while testing the Hermes MCP connection. */
-	HERMES_MCP_TOKEN?: string;
+	CF_ACCESS_TEAM_DOMAIN?: string;
+	CF_ACCESS_AUD?: string;
+	MCP_URL?: string;
 	GOOGLE_MAPS_API_KEY?: string;
 	MAPBOX_PUBLIC_TOKEN?: string;
 	GEOAPIFY_API_KEY?: string;
@@ -49,7 +53,7 @@ export default {
 		const { pathname } = requestUrl;
 		const corsHeaders = {
 			'Access-Control-Allow-Origin': '*',
-			'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+			'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
 			'Access-Control-Allow-Headers': 'Content-Type',
 		};
 
@@ -58,10 +62,57 @@ export default {
 		}
 
 		if (pathname === '/mcp') {
-			if (!isHermesAuthorized(request, env.HERMES_MCP_TOKEN)) {
+			const user = await getMcpUser(request, env);
+			if (!user) {
 				return new Response('Unauthorized', { status: 401, headers: { 'WWW-Authenticate': 'Bearer' } });
 			}
-			return createMcpHandler(() => createHermesMcpServer(env.BUCKET, requestUrl.origin))(request, env, ctx);
+			return createMcpHandler(() => createHermesMcpServer(env.BUCKET, env.DB, requestUrl.origin, user.id))(request, env, ctx);
+		}
+
+		if (pathname === '/me' && request.method === 'GET') {
+			const user = await requireCurrentUser(request, env);
+			if (!user) return unauthorizedJson(corsHeaders);
+			const assigned = await env.DB.prepare('SELECT COUNT(*) AS count FROM reel_assignments WHERE user_id = ? AND viewed_at IS NULL').bind(user.id).first<{ count: number }>();
+			return Response.json({ email: user.email, newAssignments: assigned?.count ?? 0 }, { headers: corsHeaders });
+		}
+
+		if (pathname === '/me/mcp-tokens' && request.method === 'POST') {
+			const user = await requireCurrentUser(request, env);
+			if (!user) return unauthorizedJson(corsHeaders);
+			const token = createPersonalToken();
+			await env.DB.batch([
+				env.DB.prepare("UPDATE mcp_tokens SET revoked_at = datetime('now') WHERE user_id = ? AND revoked_at IS NULL").bind(user.id),
+				env.DB.prepare('INSERT INTO mcp_tokens (id, user_id, token_hash) VALUES (?, ?, ?)').bind(crypto.randomUUID(), user.id, await hashToken(token)),
+			]);
+			return Response.json({ token, mcpUrl: env.MCP_URL ?? `${requestUrl.origin}/mcp` }, { status: 201, headers: { ...corsHeaders, 'Cache-Control': 'no-store' } });
+		}
+
+		if (pathname === '/me/assignments' && request.method === 'GET') {
+			const user = await requireCurrentUser(request, env);
+			if (!user) return unauthorizedJson(corsHeaders);
+			const assignments = await env.DB.prepare('SELECT reel_id AS reelId, created_at AS createdAt, viewed_at AS viewedAt FROM reel_assignments WHERE user_id = ?').bind(user.id).all<{ reelId: string; createdAt: string; viewedAt: string | null }>();
+			return Response.json({ assignments: assignments.results }, { headers: corsHeaders });
+		}
+
+		if (pathname === '/me/assignments' && request.method === 'POST') {
+			const user = await requireCurrentUser(request, env);
+			if (!user) return unauthorizedJson(corsHeaders);
+			const body = await request.json<{ reelId?: unknown }>().catch(() => null);
+			const reelId = typeof body?.reelId === 'string' ? body.reelId : '';
+			if (!/^\d+$/.test(reelId)) return Response.json({ error: 'A numeric reelId is required.' }, { status: 400, headers: corsHeaders });
+			const collection = await readPins(env.BUCKET);
+			if (!collection?.pins.some((pin) => pin.id === reelId)) return Response.json({ error: 'Reel not found.' }, { status: 404, headers: corsHeaders });
+			await env.DB.prepare('INSERT OR IGNORE INTO reel_assignments (user_id, reel_id) VALUES (?, ?)').bind(user.id, reelId).run();
+			return Response.json({ reelId, assigned: true }, { status: 201, headers: corsHeaders });
+		}
+
+		if (pathname.startsWith('/me/assignments/') && request.method === 'DELETE') {
+			const user = await requireCurrentUser(request, env);
+			if (!user) return unauthorizedJson(corsHeaders);
+			const reelId = pathname.slice('/me/assignments/'.length);
+			if (!/^\d+$/.test(reelId)) return Response.json({ error: 'A numeric reelId is required.' }, { status: 400, headers: corsHeaders });
+			await env.DB.prepare('DELETE FROM reel_assignments WHERE user_id = ? AND reel_id = ?').bind(user.id, reelId).run();
+			return new Response(null, { status: 204, headers: corsHeaders });
 		}
 
 		if (pathname === '/data') {
@@ -154,7 +205,7 @@ export default {
 			return Response.json(result, { headers: corsHeaders });
 		}
 
-		return new Response('GET /data or POST /ingest', { status: 404, headers: corsHeaders });
+		return env.ASSETS.fetch(request);
 	},
 };
 
@@ -162,8 +213,34 @@ export default {
  * A stateless remote MCP server. Keeping the catalog and R2 reads inside the
  * Worker means the MCP client never receives an R2 credential or object key.
  */
-function createHermesMcpServer(bucket: R2Bucket, origin: string) {
+function createHermesMcpServer(bucket: R2Bucket, db: D1Database, origin: string, userId: string) {
 	const server = new McpServer({ name: 'insider-reels', version: '1.0.0' });
+	server.registerTool(
+		'insider_get_my_new_reels',
+		{
+			description: 'Get the current user\'s newly assigned Insider TikTok reels, including their private Whisper transcripts. Use this when the user asks to summarize, review, or analyze their new Insider reels.',
+			inputSchema: { limit: z.number().int().min(1).max(10).default(10) },
+		},
+		async ({ limit }) => {
+			const assigned = await getNewAssignments(db, userId, limit);
+			if (!assigned.length) return { content: [{ type: 'text' as const, text: JSON.stringify({ reels: [], message: 'No newly assigned Insider reels.' }) }] };
+			const collection = await readPins(bucket);
+			const byId = new Map(collection?.pins.map((pin) => [pin.id, pin]) ?? []);
+			const reels = await Promise.all(assigned.map(async (reelId) => reelPayload(bucket, origin, byId.get(reelId))));
+			return { content: [{ type: 'text' as const, text: JSON.stringify({ reels: reels.filter(Boolean) }) }] };
+		},
+	);
+	server.registerTool(
+		'insider_mark_reels_viewed',
+		{
+			description: 'Mark assigned Insider reels as viewed after completing the user\'s requested review. Do not call this until the analysis has been delivered.',
+			inputSchema: { reelIds: z.array(z.string().regex(/^\d+$/)).min(1).max(10) },
+		},
+		async ({ reelIds }) => {
+			await Promise.all(reelIds.map((reelId) => markAssignmentViewed(db, userId, reelId)));
+			return { content: [{ type: 'text' as const, text: 'Marked assigned reels as viewed.' }] };
+		},
+	);
 	server.registerTool(
 		'insider_get_reel',
 		{
@@ -171,6 +248,7 @@ function createHermesMcpServer(bucket: R2Bucket, origin: string) {
 			inputSchema: { reelId: z.string().regex(/^\d+$/, 'reelId must be a numeric TikTok video ID') },
 		},
 		async ({ reelId }) => {
+			if (!await hasAssignment(db, userId, reelId)) return { isError: true, content: [{ type: 'text' as const, text: 'That reel is not assigned to this user.' }] };
 			const collection = await readPins(bucket);
 			const reel = collection?.pins.find((pin) => pin.id === reelId);
 			if (!reel) {
@@ -219,17 +297,48 @@ function createHermesMcpServer(bucket: R2Bucket, origin: string) {
 	return server;
 }
 
-function isHermesAuthorized(request: Request, expectedToken: string | undefined) {
+async function getMcpUser(request: Request, env: Env): Promise<CurrentUser | null> {
 	const authorization = request.headers.get('Authorization');
-	if (!expectedToken || !authorization?.startsWith('Bearer ')) return false;
-	return timingSafeEqual(authorization.slice('Bearer '.length), expectedToken);
+	if (!authorization?.startsWith('Bearer ')) return null;
+	const token = authorization.slice('Bearer '.length);
+	const tokenHash = await hashToken(token);
+	const tokenRow = await env.DB.prepare('SELECT user_id AS id FROM mcp_tokens WHERE token_hash = ? AND revoked_at IS NULL').bind(tokenHash).first<{ id: string }>();
+	if (!tokenRow) return null;
+	return env.DB.prepare('SELECT id, email FROM users WHERE id = ?').bind(tokenRow.id).first<CurrentUser>();
 }
 
-function timingSafeEqual(left: string, right: string) {
-	if (left.length !== right.length) return false;
-	let difference = 0;
-	for (let index = 0; index < left.length; index += 1) difference |= left.charCodeAt(index) ^ right.charCodeAt(index);
-	return difference === 0;
+async function getNewAssignments(db: D1Database, userId: string, limit: number) {
+	const result = await db.prepare('SELECT reel_id FROM reel_assignments WHERE user_id = ? AND viewed_at IS NULL ORDER BY created_at DESC LIMIT ?').bind(userId, limit).all<{ reel_id: string }>();
+	return result.results.map((row) => row.reel_id);
+}
+
+async function hasAssignment(db: D1Database, userId: string, reelId: string) {
+	return Boolean(await db.prepare('SELECT 1 FROM reel_assignments WHERE user_id = ? AND reel_id = ?').bind(userId, reelId).first());
+}
+
+async function markAssignmentViewed(db: D1Database, userId: string, reelId: string) {
+	await db.prepare("UPDATE reel_assignments SET viewed_at = COALESCE(viewed_at, datetime('now')) WHERE user_id = ? AND reel_id = ?").bind(userId, reelId).run();
+}
+
+async function reelPayload(bucket: R2Bucket, origin: string, reel: TikTokVideo | undefined) {
+	if (!reel) return null;
+	const transcriptObject = await bucket.get(`${TRANSCRIPT_PREFIX}${reel.id}.json`);
+	const transcript = transcriptObject ? await transcriptObject.json<ReelTranscript>() : null;
+	return {
+		reel: {
+			id: reel.id, platform: reel.platform, url: reel.url, username: reel.username, caption: reel.caption,
+			publishedAt: reel.publishedAt, likeCount: reel.likeCount, commentCount: reel.commentCount,
+			thumbnailUrl: reel.thumbnailKey ? `${origin}${reel.thumbnailKey}` : null,
+			video: { durationSeconds: reel.videoDurationSeconds ?? null, width: reel.videoWidth ?? null, height: reel.videoHeight ?? null, cachedForOneDay: reel.videoCached === true, originalUrl: reel.url },
+		},
+		transcript: transcript ? { status: transcript.status, language: transcript.language, text: transcript.text, segments: transcript.segments, generatedAt: transcript.generatedAt } : {
+			status: reel.transcriptStatus ?? 'unavailable', language: reel.transcriptLanguage ?? null, text: null, segments: [], generatedAt: null,
+		},
+	};
+}
+
+function unauthorizedJson(corsHeaders: Record<string, string>) {
+	return Response.json({ error: 'Sign in to Insider to continue.' }, { status: 401, headers: corsHeaders });
 }
 
 async function ingest(env: Env) {
