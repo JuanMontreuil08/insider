@@ -4,19 +4,21 @@ Insider — a San Francisco discovery site with TikTok video search and communit
 
 ## Architecture
 
-- **Cloudflare Worker** (`worker/`) — ingests TikTok videos daily at 14:00 UTC (9:00 AM America/Lima), serves the site API, transcribes reel audio, and exposes the private Hermes MCP endpoint.
+- **Primary Cloudflare Worker** (`worker/`) — ingests TikTok videos daily at 14:00 UTC (9:00 AM America/Lima), serves the signed-in site API, transcribes reel audio, and owns the user/assignment data.
+- **Public MCP Cloudflare Worker** (`mcp/`) — `insider-mcp`, an OAuth-protected remote MCP server for Hermes. It has no direct D1 or R2 access; it reaches the primary Worker only through a Cloudflare service binding.
 - **R2 bucket** (`insider-data`) — stores the legacy Instagram `sf-ai-pins.json`, the active TikTok `sf-ai-tiktok-videos.json`, place-note JSON objects, uploaded note images, cached reel media, and private transcripts.
 - **Cloudflare Workers AI** — runs `@cf/openai/whisper-large-v3-turbo` during ingest to transcribe the TikTok audio.
-- **Cloudflare Agents MCP handler** — serves a stateless, bearer-protected remote MCP endpoint so a user's Hermes agent can retrieve reel context without R2 credentials.
+- **Cloudflare OAuth Provider + MCP handler** — uses OAuth 2.1 with Dynamic Client Registration and PKCE. Cloudflare Access is the upstream identity provider; OAuth grants are stored in `OAUTH_KV`.
 - **ScrapeCreators API** — fetches TikTok videos matching "San Francisco AI" (this-month window).
 - **tinyld** — deterministic language detection; filters out non-English/non-Spanish captions during ingestion.
 - **Google Maps JavaScript API + Places API (New)** — 2D community map and place autocomplete in the note drawer. The map starts centered on San Francisco; place search and note locations are not geographically restricted.
-- **Cloudflare D1** (`insider-users`) — stores Cloudflare Access users, one active personal MCP token per user, and their reel assignments.
+- **Cloudflare D1** (`insider-users`) — stores signed-in users, their Hermes OAuth connection state, and their reel assignments.
 - **Authenticated site assets** — the main Worker serves the home page and TikTok results page from `dist/site`, so browser API calls share the signed-in origin.
 
 ## Layout
 
 - `worker/src/index.ts` — cron, TikTok video ingestion, Whisper transcription, `/mcp`, `/data`, `/config`, `/notes`, `/note-images`, and legacy `/places` endpoints.
+- `mcp/src/index.ts` — public OAuth endpoints, consent/callback UI, and the three Hermes MCP tools.
 - `worker/src/tiktok.ts` — ScrapeCreators TikTok keyword-search client.
 - `worker/src/types.ts` — shared TypeScript interfaces.
 - `worker/wrangler.json` — Cloudflare Worker config (cron, R2 binding).
@@ -24,14 +26,16 @@ Insider — a San Francisco discovery site with TikTok video search and communit
 - `index.html` — home page, Google map, place search, and sliding note panel.
 - `map.html` — results page for browsing curated Reels; accepts the home search query.
 - `dev-server.mjs` — local static preview and local `/config` endpoint.
-- `worker/migrations/0001_hermes_assignments.sql` — D1 schema for users, MCP tokens, and reel assignments.
+- `worker/migrations/0001_hermes_assignments.sql` — D1 schema for users and reel assignments. `mcp_tokens` is legacy and no longer used.
+- `worker/migrations/0002_hermes_oauth_connections.sql` — current OAuth connection gate for Hermes assignments.
 
 ## Commands
 
 - `cd worker && npx wrangler deploy` — deploy the worker.
+- `cd mcp && npx wrangler deploy` — deploy the public OAuth MCP Worker.
 - `cd worker && npx wrangler tail` — stream live logs.
 - `curl -X POST -H 'X-Ingest-Secret: …' https://insider-ingest.juanmontreuil71.workers.dev/ingest` — manual trigger when `INGEST_SECRET` is configured.
-- `curl -X POST https://insider-ingest.juanmontreuil71.workers.dev/mcp ...` — MCP protocol endpoint; it requires a personal bearer token created by the signed-in user and a valid JSON-RPC body.
+- `https://insider-mcp.juanmontreuil71.workers.dev/mcp` — public OAuth-protected MCP endpoint; do not expose it through the primary Worker or protect it with the browser Access application.
 - `cd worker && npx wrangler r2 object get insider-data/sf-ai-tiktok-videos.json --file=output.json --remote` — download the active TikTok dataset.
 - `npm run check:types` — typecheck root project.
 - `npm run dev:site` — local preview at `http://127.0.0.1:4173/`; Node loads the root `.env` at runtime. Do not print or inspect the key.
@@ -57,33 +61,48 @@ Insider — a San Francisco discovery site with TikTok video search and communit
 - Transcript states are `ready`, `no_speech`, `unavailable`, and `failed`. Treat `text` and timestamped `segments` as the quality signal. Do not use `wordCount` to decide quality, especially for non-English languages.
 - A missing/failed transcript never blocks a reel from appearing in the catalog: transcription is best-effort.
 
-## Hermes MCP and personal assignments
+## Hermes MCP and personal assignments (OAuth)
 
-`POST https://insider-ingest.juanmontreuil71.workers.dev/mcp` is a standard stateless Streamable HTTP MCP endpoint. It uses the Cloudflare Agents `createMcpHandler`; it is not an SSE-only custom server.
+The current public endpoint is `https://insider-mcp.juanmontreuil71.workers.dev/mcp`. It is a standard Streamable HTTP MCP server using OAuth 2.1, Dynamic Client Registration, and PKCE. Hermes stores its own OAuth tokens locally; Insider never displays or stores a user bearer token.
 
-Users create a personal MCP token once from the signed-in Reel page. `insider_get_my_new_reels` returns their assigned reels and private transcripts; `insider_mark_reels_viewed` clears completed work. `insider_get_reel` requires that the reel is assigned to the requesting user. No tool returns R2 credentials, private object keys, or a direct temporary MP4 URL.
+Cloudflare Access has two separate roles:
 
-The site is behind Cloudflare Access. The Worker verifies `Cf-Access-Jwt-Assertion` against the configured Access team JWKS, audience, issuer, expiry, and not-before claims before it creates or reads user assignments. Configure `CF_ACCESS_TEAM_DOMAIN` and `CF_ACCESS_AUD` as Worker environment values and protect browser routes at the Cloudflare edge. The `/mcp` route must remain reachable with its personal bearer token.
+- The **Insider** Access app authenticates a person before they use the web UI. The primary Worker validates `Cf-Access-Jwt-Assertion`.
+- The **Insider Hermes MCP** SaaS OIDC app authenticates the same person during the Hermes OAuth browser flow. Its callback is the MCP Worker `/callback` route.
 
-Each signed-in user can assign reels in the UI. D1 writes the assignment before the UI confirms success, so the user may immediately ask Hermes to inspect their new reels. D1 is deliberately queried from its primary for this read-after-write path.
+The MCP Worker exchanges the Access identity with the primary Worker through `MCP_INTERNAL_SECRET` and a service binding. The primary Worker upserts the user, records `hermes_connections`, and permits only that user's assignments. No MCP tool returns R2 credentials, object keys, a temporary MP4 URL, or cross-user data.
 
-### User connection
+Available tools:
 
-1. The user signs in before entering Insider.
-2. In the Reel page they select **Connect Hermes** and copy the generated configuration. The raw token appears only in that response and D1 stores only its SHA-256 hash.
-3. Creating a new connection token revokes the user's earlier token. Never expose it to browsers after the initial connection dialog, R2, or Git.
+- `insider_get_my_new_reels` — returns the current user's assigned, unviewed reels and transcripts.
+- `insider_get_reel` — returns a particular reel only when it is assigned to that user.
+- `insider_mark_reels_viewed` — marks completed assignments as viewed.
 
-The expected test result is `Connected` and tools discovered include `insider_get_my_new_reels`. A successful end-to-end prompt is:
+Assignments are intentionally manual. In `map.html`, **Assign to Hermes** remains disabled until a real OAuth connection exists. It writes to `reel_assignments` immediately; Hermes sees it the next time the user asks for their new Insider reels. There is no Telegram push notification or background processing queue in this MVP.
 
-```text
-Resume mis reels nuevos de Insider en español en 4 viñetas cada uno e indica idioma y si detectaste voz.
+### User setup and validated flow
+
+1. User signs into Insider first, then clicks **Connect Hermes** in the Reel page.
+2. On the Hermes host, they run this as one line:
+
+```bash
+hermes mcp add --url https://insider-mcp.juanmontreuil71.workers.dev/mcp --auth oauth --connect-timeout 315 insider_reels
 ```
+
+3. Hermes opens an OAuth URL. The user logs into Cloudflare Access and approves Insider.
+4. Desktop Hermes can normally receive the loopback redirect. On a headless/VPS Hermes host, the MCP callback page displays a one-time callback URL; paste that URL (or its `?code=...&state=...` portion) into the Hermes terminal that is waiting. This is the supported Hermes OAuth-over-SSH pattern.
+5. Hermes discovers and enables all three tools. If its Telegram gateway was already running, run `hermes gateway restart` once.
+6. In Insider, assign a reel. In Telegram, ask: `Resume mis nuevos reels de Insider.` Hermes fetches the pending assignments, analyzes them, and marks them viewed after completion.
+
+This flow was validated end-to-end on 2026-09-26: two assigned reels were fetched by Hermes and their `viewed_at` values were written in D1.
 
 ### MCP troubleshooting
 
-- Hermes MCP `HTTP 400` can originate at the Cloudflare edge before the Worker. Verify the personal token and that the Access policy bypasses `/mcp` before changing MCP code.
-- A token replacement deliberately revokes the older Hermes configuration. Generate a new configuration block if an existing connection returns `401`.
-- A direct authenticated JSON-RPC `initialize`/`tools/call` request from the development machine returned HTTP 200 during the original single-user prototype validation.
+- `insider-reels` and `insider_reels` are different Hermes server names. The validated configuration uses `insider_reels`.
+- If Hermes says `auth=None`, remove the old legacy configuration and re-add it with `--auth oauth`.
+- Do not split the `hermes mcp add` command across terminal lines.
+- The initial `mcp add` client timeout can be short; use `--connect-timeout 315` for browser authorization. Do not arbitrarily lengthen OAuth code lifetime.
+- For a remote VPS, the browser's `127.0.0.1` redirect error is expected. Copy the callback from the Insider completion page into the still-waiting VPS terminal; no tunnel is required for the MVP.
 
 ## Community notes
 
@@ -105,3 +124,6 @@ TikTok discovery is not geographically filtered; language detection keeps only E
 - `CF_ACCESS_TEAM_DOMAIN` — Cloudflare Access team domain used to validate browser-session JWTs.
 - `CF_ACCESS_AUD` — Cloudflare Access application audience used to validate browser-session JWTs.
 - `MCP_URL` — optional public MCP URL shown in the user connection dialog. Use it when `/mcp` has a separate hostname.
+- `MCP_INTERNAL_SECRET` — shared secret between the primary Worker and MCP Worker for its service-binding-only internal routes; set the same value on both Workers.
+- `ACCESS_CLIENT_SECRET` — secret for the Cloudflare Access SaaS OIDC application; set only on the MCP Worker.
+- `OAUTH_KV` — KV namespace binding on the MCP Worker for OAuth grants, clients, and authorization state (not a plaintext user-token store).
