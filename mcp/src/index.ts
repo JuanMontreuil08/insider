@@ -90,6 +90,13 @@ async function callback(request: Request, env: Env): Promise<Response> {
 		if (!identity.sub || !identity.email) return new Response('Your Access identity did not include an email.', { status: 403 });
 		const userId = await activateInsiderUser(identity, env);
 		const { redirectTo } = await oauth.completeAuthorization({ request: upstream.request, userId, metadata: { email: identity.email }, scope: [scope], props: { userId } });
+		if (isLoopbackCallback(redirectTo)) {
+			upstream.headers.set('Content-Type', 'text/html; charset=utf-8');
+			upstream.headers.set('Cache-Control', 'no-store');
+			upstream.headers.set('Referrer-Policy', 'no-referrer');
+			upstream.headers.set('Content-Security-Policy', `default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; frame-src ${new URL(redirectTo).origin}; base-uri 'none'; form-action 'none'`);
+			return new Response(loopbackCompletionPage(redirectTo), { headers: upstream.headers });
+		}
 		upstream.headers.set('Location', redirectTo);
 		return new Response(null, { status: 302, headers: upstream.headers });
 	} catch (error) { return authorizationErrorResponse(error); }
@@ -157,6 +164,16 @@ function authorizationErrorResponse(error: unknown) {
 function consentPage(clientName: string, redirectUri: string, handle: string) {
 	const client = escapeHtml(clientName), host = escapeHtml(new URL(redirectUri).hostname), safeHandle = escapeHtml(handle);
 	return `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Connect Hermes · Insider</title><style>body{margin:0;background:#eef3e8;color:#13271f;font:16px system-ui,sans-serif;display:grid;min-height:100vh;place-items:center}.card{background:#fff;max-width:440px;padding:40px;border-radius:20px;box-shadow:0 14px 45px #173b2620}h1{font-size:31px;margin:12px 0}p{line-height:1.5}button{border:0;border-radius:999px;padding:12px 18px;font-weight:700;font-size:15px;cursor:pointer}.allow{background:#194e37;color:#fff}.deny{background:#edf0ec;color:#20342a;margin-left:8px}</style><main class="card"><strong>insider.</strong><h1>Connect Hermes?</h1><p><b>${client}</b> will be able to read the reels you assign in Insider, including their transcript. It will not receive your Insider password or storage access.</p><p>Access will be sent to <b>${host}</b>.</p><form method="post"><input type="hidden" name="handle" value="${safeHandle}"><button class="allow" name="decision" value="approve">Connect Hermes</button><button class="deny" name="decision" value="deny">Cancel</button></form></main>`;
+}
+
+function isLoopbackCallback(value: string) {
+	const hostname = new URL(value).hostname;
+	return hostname === '127.0.0.1' || hostname === 'localhost' || hostname === '[::1]';
+}
+
+function loopbackCompletionPage(callbackUrl: string) {
+	const escapedCallback = escapeHtml(callbackUrl);
+	return `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Finish Hermes setup · Insider</title><style>body{margin:0;background:#eef3e8;color:#13271f;font:16px system-ui,sans-serif;display:grid;min-height:100vh;place-items:center}.card{background:#fff;max-width:560px;padding:40px;border-radius:20px;box-shadow:0 14px 45px #173b2620}h1{font-size:31px;margin:12px 0}p{line-height:1.5;color:#506057}.local{margin:22px 0;padding:14px 16px;border-radius:10px;background:#edf5e9;color:#245e3e}.remote{margin-top:20px;padding-top:20px;border-top:1px solid #d8ddd5}textarea{box-sizing:border-box;width:100%;min-height:90px;padding:12px;border:1px solid #c8d0c7;border-radius:8px;background:#f6f8f4;color:#18251f;font:12px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;resize:vertical}button{margin-top:10px;border:0;border-radius:999px;padding:11px 15px;background:#194e37;color:#fff;font-weight:700;cursor:pointer}small{display:block;margin-top:10px;color:#68736c}</style><main class="card"><strong>insider.</strong><h1>Finishing Hermes setup</h1><p>Your Insider connection is approved.</p><div class="local"><b>Hermes on this computer?</b><br>It receives the authorization automatically. You can return to Hermes now.</div><section class="remote"><b>Hermes running on a VPS?</b><p>Copy this callback and paste it into the Hermes terminal that is waiting for it. This is a one-time, short-lived authorization code.</p><textarea id="callback" readonly>${escapedCallback}</textarea><button id="copy" type="button">Copy callback</button><small>After Hermes accepts it, refresh Insider to assign reels.</small></section></main><iframe src="${escapedCallback}" hidden aria-hidden="true"></iframe><script>const b=document.getElementById('copy'),t=document.getElementById('callback');b.onclick=async()=>{try{await navigator.clipboard.writeText(t.value);b.textContent='Copied'}catch{t.focus();t.select();b.textContent='Select and copy'}};</script>`;
 }
 
 function escapeHtml(value: string) { return value.replace(/[&<>"']/g, (char) => `&#${char.charCodeAt(0)};`); }
