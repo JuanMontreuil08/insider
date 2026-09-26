@@ -28,12 +28,16 @@
     .reel-footer a { color: var(--ink); text-decoration: none; border-bottom: 1px solid var(--accent); }
     .hermes { appearance:none; border:1px solid var(--accent); border-radius:999px; background:#fff; color:var(--accent); cursor:pointer; font:600 12px/1 Arial,Helvetica,sans-serif; padding:7px 10px; }
     .hermes[aria-pressed="true"] { background:var(--accent); color:#fff; }
-    .hermes:disabled { cursor:wait; opacity:.6; }
+    .hermes:disabled { cursor:not-allowed; opacity:.48; }
     .account { display:flex; align-items:center; gap:10px; color:var(--muted); font-size:12px; }
     .account button { appearance:none; border:0; border-bottom:1px solid var(--accent); background:transparent; color:var(--ink); cursor:pointer; padding:0; font:inherit; }
     dialog { width:min(100% - 32px,620px); border:1px solid var(--line); border-radius:12px; padding:24px; color:var(--ink); }
     dialog::backdrop { background:rgba(0,0,0,.35); }
-    dialog pre { overflow:auto; padding:14px; background:#f1f2ee; font-size:12px; }
+    dialog pre { overflow:auto; margin:16px 0 10px; padding:16px; border-radius:7px; background:#18251f; color:#dff4d2; font:13px/1.5 "SFMono-Regular",Menlo,Consolas,monospace; }
+    dialog h2 { margin:18px 0 8px; font-size:28px; letter-spacing:-.04em; }
+    dialog p, dialog li { color:var(--muted); font-size:14px; line-height:1.5; }
+    dialog ol { margin:14px 0 0; padding-left:22px; }
+    .copy-command { appearance:none; border:1px solid var(--accent); border-radius:999px; background:#fff; color:var(--accent); cursor:pointer; padding:8px 12px; font:600 12px/1 Arial,Helvetica,sans-serif; }
     .reel-thumb { width: 100%; max-height: 220px; object-fit: cover; border-radius: 2px; background: #eee; }
     .empty { padding: 28px 0; color: var(--muted); font-size: 15px; }
     @media (max-width: 640px) { .page { width: min(100% - 32px, 980px); padding-top: 36px; } .reel { grid-template-columns: 1fr; padding: 18px; } .reel-thumb { order: -1; max-height: 240px; } .search { font-size: 16px; } }
@@ -49,7 +53,7 @@
     <p class="result-count" id="result-count" role="status">Loading videos…</p>
     <div class="results" id="results"></div>
   </main>
-  <dialog id="hermes-dialog"><form method="dialog"><button aria-label="Close">Close</button></form><h2>Connect Hermes</h2><p>Copy this once into your Hermes configuration. Your token is shown only now.</p><pre id="hermes-config"></pre></dialog>
+  <dialog id="hermes-dialog"><form method="dialog"><button aria-label="Close">Close</button></form><h2>Connect Hermes</h2><p>Run this once in the terminal where Hermes is installed.</p><pre id="hermes-command">hermes mcp add --url https://insider-mcp.juanmontreuil71.workers.dev/mcp --auth oauth insider-reels</pre><button class="copy-command" id="copy-hermes-command" type="button">Copy command</button><ol><li>Hermes opens a browser window.</li><li>Sign in to Insider and approve the connection.</li><li>Return here and refresh. Assigning reels will unlock automatically.</li></ol></dialog>
   <script>
     const search = document.getElementById('search');
     const results = document.getElementById('results');
@@ -57,12 +61,14 @@
     const accountStatus = document.getElementById('account-status');
     const connectHermes = document.getElementById('connect-hermes');
     const hermesDialog = document.getElementById('hermes-dialog');
-    const hermesConfig = document.getElementById('hermes-config');
+    const hermesCommand = document.getElementById('hermes-command');
+    const copyHermesCommand = document.getElementById('copy-hermes-command');
     const API = ['localhost','127.0.0.1'].includes(location.hostname) ? '' : location.origin;
     search.value = new URLSearchParams(location.search).get('q') || '';
     let reels = [];
     let assignedReels = new Set();
     let signedIn = false;
+    let hermesConnected = false;
 
     fetch(`${API}/data`)
       .then((response) => { if (!response.ok) throw new Error('Could not load Reels'); return response.json(); })
@@ -74,7 +80,13 @@
 
     fetch(`${API}/me`)
       .then((response) => response.ok ? response.json() : Promise.reject())
-      .then((account) => { signedIn = true; accountStatus.textContent = `${account.email} · ${account.newAssignments} new`; return fetch(`${API}/me/assignments`); })
+      .then((account) => {
+        signedIn = true;
+        hermesConnected = account.hermesEnabled === true;
+        accountStatus.textContent = hermesConnected ? `${account.email} · Hermes connected · ${account.newAssignments} new` : `${account.email} · ${account.newAssignments} new`;
+        connectHermes.hidden = hermesConnected;
+        return fetch(`${API}/me/assignments`);
+      })
       .then((response) => response.ok ? response.json() : Promise.reject())
       .then(({ assignments }) => { assignedReels = new Set(assignments.map((assignment) => assignment.reelId)); render(); })
       .catch(() => { accountStatus.textContent = 'Sign in required'; connectHermes.hidden = true; });
@@ -102,6 +114,8 @@
       assign.type = 'button'; assign.className = 'hermes'; assign.dataset.reelId = reel.id;
       assign.setAttribute('aria-pressed', String(assignedReels.has(reel.id)));
       assign.textContent = assignedReels.has(reel.id) ? 'Hermes assigned ✓' : 'Assign to Hermes';
+      assign.disabled = !hermesConnected;
+      if (!hermesConnected) assign.title = 'Connect Hermes first';
       assign.addEventListener('click', () => toggleAssignment(reel.id, assign));
       footer.append(assign);
       copy.append(footer);
@@ -125,26 +139,22 @@
     function formatDate(value) { return new Date(value).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }); }
 
     async function toggleAssignment(reelId, button) {
-      if (!signedIn) return;
+      if (!signedIn || !hermesConnected) return;
       const assigned = assignedReels.has(reelId); button.disabled = true;
       try {
         const response = await fetch(assigned ? `${API}/me/assignments/${reelId}` : `${API}/me/assignments`, assigned ? { method: 'DELETE' } : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reelId }) });
+        if (response.status === 409) { hermesDialog.showModal(); return; }
         if (!response.ok) throw new Error('Could not update assignment');
         assigned ? assignedReels.delete(reelId) : assignedReels.add(reelId);
         render();
       } catch { button.disabled = false; alert('Could not update this Hermes assignment. Please try again.'); }
     }
 
-    connectHermes.addEventListener('click', async () => {
-      connectHermes.disabled = true;
-      try {
-        const response = await fetch(`${API}/me/mcp-tokens`, { method: 'POST' });
-        if (!response.ok) throw new Error('Could not create token');
-        const { token, mcpUrl } = await response.json();
-        hermesConfig.textContent = `mcp_servers:\n  insider_reels:\n    url: "${mcpUrl}"\n    headers:\n      Authorization: "Bearer ${token}"\n    enabled: true\n    timeout: 120\n    connect_timeout: 60\n    skip_preflight: true`;
-        hermesDialog.showModal();
-      } catch { alert('Could not connect Hermes. Please try again.'); }
-      finally { connectHermes.disabled = false; }
+    connectHermes.addEventListener('click', () => hermesDialog.showModal());
+    copyHermesCommand.addEventListener('click', async () => {
+      try { await navigator.clipboard.writeText(hermesCommand.textContent); copyHermesCommand.textContent = 'Copied'; }
+      catch { copyHermesCommand.textContent = 'Select and copy'; }
+      setTimeout(() => { copyHermesCommand.textContent = 'Copy command'; }, 1800);
     });
   </script>
 </body>
