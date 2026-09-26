@@ -78,7 +78,8 @@ export default {
 			const user = await requireCurrentUser(request, env);
 			if (!user) return unauthorizedJson(corsHeaders);
 			const assigned = await env.DB.prepare('SELECT COUNT(*) AS count FROM reel_assignments WHERE user_id = ? AND viewed_at IS NULL').bind(user.id).first<{ count: number }>();
-			return Response.json({ email: user.email, newAssignments: assigned?.count ?? 0 }, { headers: corsHeaders });
+			const mcpToken = await env.DB.prepare('SELECT 1 FROM mcp_tokens WHERE user_id = ? AND revoked_at IS NULL LIMIT 1').bind(user.id).first();
+			return Response.json({ email: user.email, newAssignments: assigned?.count ?? 0, hermesEnabled: Boolean(mcpToken) }, { headers: corsHeaders });
 		}
 
 		if (pathname === '/me/mcp-tokens' && request.method === 'POST') {
@@ -102,6 +103,8 @@ export default {
 		if (pathname === '/me/assignments' && request.method === 'POST') {
 			const user = await requireCurrentUser(request, env);
 			if (!user) return unauthorizedJson(corsHeaders);
+			const mcpToken = await env.DB.prepare('SELECT 1 FROM mcp_tokens WHERE user_id = ? AND revoked_at IS NULL LIMIT 1').bind(user.id).first();
+			if (!mcpToken) return Response.json({ error: 'Set up Hermes before assigning Reels.' }, { status: 409, headers: corsHeaders });
 			const body = await request.json<{ reelId?: unknown }>().catch(() => null);
 			const reelId = typeof body?.reelId === 'string' ? body.reelId : '';
 			if (!/^\d+$/.test(reelId)) return Response.json({ error: 'A numeric reelId is required.' }, { status: 400, headers: corsHeaders });
