@@ -30,7 +30,7 @@ Insider — a San Francisco discovery site with TikTok video search and communit
 
 - `cd worker && npx wrangler deploy` — deploy the worker.
 - `cd worker && npx wrangler tail` — stream live logs.
-- `curl -X POST https://insider-ingest.juanmontreuil71.workers.dev/ingest` — manual trigger.
+- `curl -X POST -H 'X-Ingest-Secret: …' https://insider-ingest.juanmontreuil71.workers.dev/ingest` — manual trigger when `INGEST_SECRET` is configured.
 - `curl -X POST https://insider-ingest.juanmontreuil71.workers.dev/mcp ...` — MCP protocol endpoint; it requires a personal bearer token created by the signed-in user and a valid JSON-RPC body.
 - `cd worker && npx wrangler r2 object get insider-data/sf-ai-tiktok-videos.json --file=output.json --remote` — download the active TikTok dataset.
 - `npm run check:types` — typecheck root project.
@@ -99,7 +99,9 @@ TikTok discovery is not geographically filtered; language detection keeps only E
 
 - `SCRAPE_API_KEY` — ScrapeCreators API key.
 - `GOOGLE_MAPS_API_KEY` — browser key for Maps JavaScript API and Places API (New). Currently available in the local environment; configure it on the deployed Worker before publishing the new home page.
-- `MAPBOX_PUBLIC_TOKEN` and `GEOAPIFY_API_KEY` — retained for compatibility with the currently deployed older static site until the Google Maps site is deployed.
+- `GEOAPIFY_API_KEY` — retained for the legacy `/places` proxy; the current home page uses Google Maps and Places directly.
+- `CORS_ORIGINS` — comma-separated browser origins allowed to call the Worker API.
+- `INGEST_SECRET` — secret required by manual `POST /ingest`; scheduled ingestion does not use it.
 - `CF_ACCESS_TEAM_DOMAIN` — Cloudflare Access team domain used to validate browser-session JWTs.
 - `CF_ACCESS_AUD` — Cloudflare Access application audience used to validate browser-session JWTs.
 - `MCP_URL` — optional public MCP URL shown in the user connection dialog. Use it when `/mcp` has a separate hostname.
