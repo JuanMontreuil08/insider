@@ -15,6 +15,7 @@ interface Env {
 	CF_ACCESS_TEAM_DOMAIN?: string;
 	CF_ACCESS_AUD?: string;
 	MCP_URL?: string;
+	PUBLIC_ORIGIN?: string;
 	GOOGLE_MAPS_API_KEY?: string;
 	GEOAPIFY_API_KEY?: string;
 	CORS_ORIGINS?: string;
@@ -70,7 +71,7 @@ export default {
 			if (!user) {
 				return new Response('Unauthorized', { status: 401, headers: { 'WWW-Authenticate': 'Bearer' } });
 			}
-			return createMcpHandler(() => createHermesMcpServer(env.BUCKET, env.DB, requestUrl.origin, user.id))(request, env, ctx);
+			return createMcpHandler(() => createHermesMcpServer(env.BUCKET, env.DB, env.PUBLIC_ORIGIN ?? requestUrl.origin, user.id))(request, env, ctx);
 		}
 
 		if (pathname === '/me' && request.method === 'GET') {

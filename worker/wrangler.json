@@ -28,5 +28,11 @@
 		"html_handling": "drop-trailing-slash",
 		"run_worker_first": true
 	},
+	"vars": {
+		"CF_ACCESS_TEAM_DOMAIN": "white-paper-70e3.cloudflareaccess.com",
+		"CF_ACCESS_AUD": "82ef1c5b90502a834bf6ef66a43475c7ffe1a57e882a1f89540f5e7906cdffc9",
+		"MCP_URL": "https://insider-mcp.juanmontreuil71.workers.dev/mcp",
+		"PUBLIC_ORIGIN": "https://insider-ingest.juanmontreuil71.workers.dev"
+	},
 	"compatibility_flags": ["nodejs_compat"]
 }

@@ -1,0 +1,11 @@
+{
+	"name": "insider-mcp",
+	"main": "src/index.ts",
+	"compatibility_date": "2024-12-01",
+	"services": [
+		{
+			"binding": "INSIDER",
+			"service": "insider-ingest"
+		}
+	]
+}
