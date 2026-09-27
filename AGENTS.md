@@ -23,9 +23,11 @@ Insider — a San Francisco discovery site with TikTok video search and communit
 - `worker/src/types.ts` — shared TypeScript interfaces.
 - `worker/wrangler.json` — Cloudflare Worker config (cron, R2 binding).
 - `public/data/sf-ai-pins.json` — legacy local Instagram dataset copy.
-- `index.html` — home page, Google map, place search, and sliding note panel.
+- `index.html` — home page, Golden Gate pencil illustration, Google map, place search, and sliding note panel.
 - `map.html` — results page for browsing curated Reels; accepts the home search query.
 - `dev-server.mjs` — local static preview and local `/config` endpoint.
+- `assets/golden-gate-pencil.png` — active home-page artwork; it is the only visual asset copied into the production site build.
+- `scripts/generate-kling-golden-gate.mjs` — reusable Kling Image generator for the Golden Gate artwork. It uses `KLING_API_KEY` from the local environment and must never print it.
 - `worker/migrations/0001_hermes_assignments.sql` — D1 schema for users and reel assignments. `mcp_tokens` is legacy and no longer used.
 - `worker/migrations/0002_hermes_oauth_connections.sql` — current OAuth connection gate for Hermes assignments.
 
@@ -39,7 +41,7 @@ Insider — a San Francisco discovery site with TikTok video search and communit
 - `cd worker && npx wrangler r2 object get insider-data/sf-ai-tiktok-videos.json --file=output.json --remote` — download the active TikTok dataset.
 - `npm run check:types` — typecheck root project.
 - `npm run dev:site` — local preview at `http://127.0.0.1:4173/`; Node loads the root `.env` at runtime. Do not print or inspect the key.
-- `npm run build:site` — copy both pages into `dist/site` before deploying the static site.
+- `npm run build:site` — rebuild `dist/site` from scratch with both pages, the stylesheet, and the final Golden Gate artwork before deployment.
 - `cd worker && npx wrangler d1 migrations apply insider-users --remote` — apply D1 schema changes.
 - `npm run build:site && cd worker && npx wrangler deploy` — build and deploy the site plus API from one Worker.
 
@@ -109,8 +111,9 @@ This flow was validated end-to-end on 2026-09-26: two assigned reels were fetche
 1. The browser loads Google Maps with the browser key from `/config` and starts the map at San Francisco.
 2. Google Places provides suggestions directly in the browser. Selecting one supplies its name, Place ID, and coordinates.
 3. A user submits a note and optional photo to `POST /notes`; the Worker stores JSON and images in R2.
-4. `GET /notes` returns notes; the home page renders red markers. Clicking a marker opens its note in the right-hand panel.
-5. Local preview gets the key from the root `.env` through `dev-server.mjs`. The deployed site needs `GOOGLE_MAPS_API_KEY` configured on `insider-ingest` in Cloudflare. Browser keys must be restricted to the preview and production site origins in Google Cloud.
+4. `GET /notes` returns notes and their total; the home page renders red markers. `GET /notes?summary=1` returns only the total from R2, avoiding note-object reads.
+5. The home-page count refreshes from the summary endpoint every minute and updates immediately after a successful submission. It is eventually consistent for notes left by other visitors.
+6. Local preview gets the key from the root `.env` through `dev-server.mjs`. The deployed site needs `GOOGLE_MAPS_API_KEY` configured on `insider-ingest` in Cloudflare. Browser keys must be restricted to the preview and production site origins in Google Cloud.
 
 TikTok discovery is not geographically filtered; language detection keeps only English and Spanish captions. Community place notes are likewise not geographically restricted.
 
@@ -128,18 +131,17 @@ TikTok discovery is not geographically filtered; language detection keeps only E
 - `ACCESS_CLIENT_SECRET` — secret for the Cloudflare Access SaaS OIDC application; set only on the MCP Worker.
 - `OAUTH_KV` — KV namespace binding on the MCP Worker for OAuth grants, clients, and authorization state (not a plaintext user-token store).
 
-## Auth branch delivery status (2026-09-27)
+## Current delivery status (2026-09-27)
 
-The Hermes/Auth-ready branch is `feature/hermes-oauth-connect`. The Insider UI and Blender city work were committed as `2f98434` (`feat: integrate connected Blender city into Insider UI`) and pushed to that branch.
+`main` is the final delivery branch. The active home page uses the generated Golden Gate pencil illustration with color-matched edge gradients; it no longer loads WebGL, Three.js, or the Blender city asset. The editable Blender source files remain in the repository as historical design material only and are not included in `dist/site`.
 
-The deployed primary Worker is `insider-ingest` at `https://insider-ingest.juanmontreuil71.workers.dev` (Cloudflare version `2f717e76-1e84-451b-8ab6-411444e9e98c`). The deployment includes the static site, the Three.js loaders, and the editable Blender GLB city asset. The scene has a curved connector from the Golden Gate Bridge to the waterfront avenue and continuous traffic animation. The map and community notes layout were preserved.
+The deployed primary Worker is `insider-ingest` at `https://insider-ingest.juanmontreuil71.workers.dev` (Cloudflare version `561fe6a1-0c4f-4d9b-83d6-3b71c8efb49d`). The live note total uses the R2-backed summary route described above.
 
 Validation completed before deployment:
 
-- `node --test scripts/city-asset.test.mjs`
-- `npm run build:site`
+- `npm run build:site` confirmed that production assets contain only the pages, stylesheet, and final Golden Gate image.
 - `npm run check:types`
-- JavaScript syntax checks and `git diff --check`
-- Local desktop and 390px mobile checks with no horizontal overflow; WebGL renderer loaded successfully.
+- `node --check dev-server.mjs`
+- `git diff --check`
 
 Local preview caveat: `/data`, `/config`, and `/notes` return a Cloudflare Access redirect when the local preview has no Access session. This makes the local map show its fallback and the Reels catalog show `Could not load the video catalog`; it does not mean the production catalog is empty. Validate those authenticated flows on the protected production origin after signing in.
