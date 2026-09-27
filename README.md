@@ -1,29 +1,22 @@
 # Insider
 
-Insider has two pages: `index.html` is the search and city map home page; `map.html` shows searchable TikTok videos. A search on the home page opens `/map.html?q=...`.
+Insider is a guide to San Francisco through short videos and community notes.
 
-The Cloudflare Worker serves the authenticated site assets plus the TikTok catalog at `/data`, backed by `sf-ai-tiktok-videos.json` in R2. The legacy Instagram catalog remains in `sf-ai-pins.json` and is not served. The Worker also serves Google Maps configuration at `/config`, community place notes at `/notes`, and Hermes reel assignments. Notes and uploaded photos are stored as separate R2 objects so new posts do not overwrite one another.
+It helps you find ideas, places, and local moments that are easy to miss. The home page pairs a hand-drawn view of the Golden Gate Bridge with a living map of notes left by the community.
 
-## Setup
+## What you can do
 
-1. Set `SCRAPE_API_KEY` as a Worker secret for ingestion. Transcription uses the bound Cloudflare Workers AI service.
-2. Enable Maps JavaScript API and Places API (New) in Google Cloud. Create a browser API key restricted to the local and production site origins, then set it as `GOOGLE_MAPS_API_KEY` on the Worker. The home page uses a 2D Google map and Google's place autocomplete.
-3. Configure a Cloudflare Access application in front of the site Worker. Its audience and team domain must be set as `CF_ACCESS_AUD` and `CF_ACCESS_TEAM_DOMAIN`; protect the site and `/me/*`, while allowing bearer-authenticated `/mcp` requests through.
-4. Run `npm run build:site`, then `cd worker && npx wrangler deploy`. The Worker serves both the site assets and API from one origin.
+- Search short videos about San Francisco’s tech and creative scene.
+- Browse places people recommend on the community map.
+- Leave a note about a place you enjoyed, with an optional photo.
+- Save selected videos to Hermes for private follow-up.
 
-The map opens centered on San Francisco. Search and pins can use any location. Notes require a place and description; JPG, PNG, or WebP photos under 5 MB are optional. A public deployment should add abuse controls and moderation before promoting uploads widely.
+## Visit Insider
 
-## Development
+[Open Insider](https://insider-ingest.juanmontreuil71.workers.dev)
 
-`npm run dev:site` starts the local site at `http://127.0.0.1:4173/` and loads `GOOGLE_MAPS_API_KEY` from the root `.env` at runtime. Do not commit or print the key. Local preview does not emulate Cloudflare Access, so Hermes assignment controls remain unavailable. `npm run check:types` checks the Worker TypeScript. The Worker cron ingests recent TikTok videos into `sf-ai-tiktok-videos.json` in the `insider-data` R2 bucket. `/ingest` can trigger ingestion manually. It runs at 14:00 UTC (9:00 AM America/Lima).
+The site is protected by sign-in, so you may be asked to authenticate before entering.
 
-## Hermes assignments
+## For the team
 
-After signing in, a user marks reels with **Assign to Hermes**. The assignment is stored in D1 immediately. The user then asks Hermes to review their new Insider reels; Hermes calls `insider_get_my_new_reels` and receives only that user's assigned reels and private transcripts. The connection dialog creates one personal bearer token at a time; creating a replacement revokes the previous token.
-
-Create/apply the production schema with:
-
-```bash
-cd worker
-npx wrangler d1 migrations apply insider-users --remote
-```
+Project setup and operational details are in [AGENTS.md](AGENTS.md).
