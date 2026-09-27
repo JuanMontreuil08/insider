@@ -127,3 +127,19 @@ TikTok discovery is not geographically filtered; language detection keeps only E
 - `MCP_INTERNAL_SECRET` — shared secret between the primary Worker and MCP Worker for its service-binding-only internal routes; set the same value on both Workers.
 - `ACCESS_CLIENT_SECRET` — secret for the Cloudflare Access SaaS OIDC application; set only on the MCP Worker.
 - `OAUTH_KV` — KV namespace binding on the MCP Worker for OAuth grants, clients, and authorization state (not a plaintext user-token store).
+
+## Auth branch delivery status (2026-09-27)
+
+The Hermes/Auth-ready branch is `feature/hermes-oauth-connect`. The Insider UI and Blender city work were committed as `2f98434` (`feat: integrate connected Blender city into Insider UI`) and pushed to that branch.
+
+The deployed primary Worker is `insider-ingest` at `https://insider-ingest.juanmontreuil71.workers.dev` (Cloudflare version `2f717e76-1e84-451b-8ab6-411444e9e98c`). The deployment includes the static site, the Three.js loaders, and the editable Blender GLB city asset. The scene has a curved connector from the Golden Gate Bridge to the waterfront avenue and continuous traffic animation. The map and community notes layout were preserved.
+
+Validation completed before deployment:
+
+- `node --test scripts/city-asset.test.mjs`
+- `npm run build:site`
+- `npm run check:types`
+- JavaScript syntax checks and `git diff --check`
+- Local desktop and 390px mobile checks with no horizontal overflow; WebGL renderer loaded successfully.
+
+Local preview caveat: `/data`, `/config`, and `/notes` return a Cloudflare Access redirect when the local preview has no Access session. This makes the local map show its fallback and the Reels catalog show `Could not load the video catalog`; it does not mean the production catalog is empty. Validate those authenticated flows on the protected production origin after signing in.
