@@ -31,12 +31,17 @@
     @keyframes pulse{0%{transform:scale(.7);opacity:.45}100%{transform:scale(1.8);opacity:0}}
     @media(prefers-reduced-motion:reduce){.drawer,.drawer-backdrop,.pin-pulse{transition:none;animation:none}}
   </style>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Silkscreen:wght@400;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/assets/editorial.css">
+  <script src="/assets/bay-scene.js" defer></script>
 </head>
 <body>
   <div class="shell">
     <header><a class="brand" href="/">insider<span class="brand-dot">.</span></a><nav><a href="/map.html">Explore Reels</a><a href="#city-notes">City notes</a></nav></header>
     <main>
-      <section class="hero"><div class="eyebrow">San Francisco, seen differently</div><h1>Find your way<br><em>inside</em> the city.</h1><p class="lead">Search the Reels shaping San Francisco’s tech scene. Then explore the places and stories people leave behind.</p><form class="search" action="/map.html" method="get"><span class="search-icon" aria-hidden="true">⌕</span><input type="search" name="q" aria-label="Search Reels" placeholder="What are you curious about?" required><button type="submit">Explore →</button></form><p class="hint">Try “AI”, “startup”, or a place you love.</p></section>
+      <section class="hero"><div class="hero-copy"><div class="eyebrow">01 / San Francisco, seen differently</div><h1>Find your way<br><em>inside</em> the city.</h1><p class="lead">Search the Reels shaping San Francisco’s tech scene. Then explore the places and stories people leave behind.</p><form class="search" action="/map.html" method="get"><span class="search-icon" aria-hidden="true">⌕</span><input type="search" name="q" aria-label="Search Reels" placeholder="What are you curious about?" required><button type="submit">Explore →</button></form><p class="hint">Try “AI”, “startup”, or a place you love.</p></div><figure class="bay-scene" aria-label="Illustrated San Francisco at night: Golden Gate Bridge, passing cars and Salesforce Tower"><div id="bay-art" aria-hidden="true"><img src="/assets/insider-city.png" alt="" width="1000" height="700"></div><figcaption><span>San Francisco / after hours</span></figcaption></figure></section>
       <section id="city-notes"><div class="section-top"><div><div class="eyebrow">A living map</div><h2>Notes from the city</h2></div><p>Small moments, favorite corners, and places worth sharing. Search for a spot you visited to leave your own note.</p></div>
         <div class="map-split">
           <div class="map-area"><div id="map" aria-label="Map of San Francisco"></div><div class="map-fallback" id="map-fallback" hidden><div><strong>San Francisco is waiting.</strong><small id="map-error">Google Maps is unavailable right now.</small></div></div></div>
@@ -62,7 +67,7 @@
   <button class="drawer-backdrop" id="drawer-backdrop" type="button" aria-label="Close panel" tabindex="-1"></button>
   <aside class="drawer" id="note-drawer" role="dialog" aria-modal="true" aria-labelledby="drawer-title" aria-hidden="true">
     <p class="drawer-eyebrow">// NEW_NOTE</p>
-    <div class="drawer-head"><h2 id="drawer-title">leave_a_city_note</h2><button class="close" type="button" id="close-drawer" aria-label="Close">×</button></div>
+    <div class="drawer-head"><h2 id="drawer-title">Leave a city note</h2><button class="close" type="button" id="close-drawer" aria-label="Close">×</button></div>
     <form id="note-form"><p class="drawer-copy">search a place, then share what you remember.</p><label for="google-place-search">Place:</label><div id="place-search"></div><div class="selected-place" id="selected-place" hidden></div><label for="description">Note:</label><textarea class="field" id="description" name="description" maxlength="500" required placeholder="what_made_this_place_memorable"></textarea><p class="char-count"><span id="char-count">0</span>/500</p><label for="image">Photo: <span style="font-weight:400;color:#9aa196">(optional)</span></label><label class="file-upload"><span id="file-label">+ upload_file</span><input id="image" name="image" type="file" accept="image/jpeg,image/png,image/webp"></label><p id="form-status" role="status"></p><button class="primary" type="submit">Publish note →</button></form>
   </aside>
   <script>
@@ -129,7 +134,8 @@
     function openFormDrawer() {
       lastFocus = document.activeElement;
       drawer.classList.add('open'); backdrop.classList.add('open'); drawer.setAttribute('aria-hidden','false'); document.body.classList.add('drawer-open');
-      document.getElementById('close-drawer').focus();
+      // Wait for visibility to settle before moving keyboard focus into the dialog.
+      setTimeout(() => { if (drawer.classList.contains('open')) document.getElementById('close-drawer').focus(); }, matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 230);
     }
     function closeDrawer() { drawer.classList.remove('open'); backdrop.classList.remove('open'); drawer.setAttribute('aria-hidden','true'); document.body.classList.remove('drawer-open'); lastFocus?.focus(); }
     document.getElementById('add-note').addEventListener('click', openFormDrawer);
