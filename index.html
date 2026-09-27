@@ -35,14 +35,13 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Silkscreen:wght@400;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/assets/editorial.css">
-  <script src="/assets/bay-scene.js" defer></script>
 </head>
 <body>
   <div class="shell">
     <header><a class="brand" href="/">insider<span class="brand-dot">.</span></a><nav><a href="/map.html">Explore Reels</a><a href="#city-notes">City notes</a></nav></header>
     <main>
-      <section class="hero"><div class="hero-copy"><div class="eyebrow">01 / San Francisco, seen differently</div><h1>Find your way<br><em>inside</em> the city.</h1><p class="lead">Search the Reels shaping San Francisco’s tech scene. Then explore the places and stories people leave behind.</p><form class="search" action="/map.html" method="get"><span class="search-icon" aria-hidden="true">⌕</span><input type="search" name="q" aria-label="Search Reels" placeholder="What are you curious about?" required><button type="submit">Explore →</button></form><p class="hint">Try “AI”, “startup”, or a place you love.</p></div><figure class="bay-scene" aria-label="Illustrated San Francisco at night: Golden Gate Bridge, passing cars and Salesforce Tower"><div id="bay-art" aria-hidden="true"><img src="/assets/insider-city.png" alt="" width="1000" height="700"></div><figcaption><span>San Francisco / after hours</span></figcaption></figure></section>
-      <section id="city-notes"><div class="section-top"><div><div class="eyebrow">A living map</div><h2>Notes from the city</h2></div><p>Small moments, favorite corners, and places worth sharing. Search for a spot you visited to leave your own note.</p></div>
+      <section class="hero"><div class="hero-copy"><div class="eyebrow">01 / San Francisco, seen differently</div><h1>Find your way<br><em>inside</em> the city.</h1><p class="lead">Search the Reels shaping San Francisco’s tech scene. Then explore the places and stories people leave behind.</p><form class="search" action="/map.html" method="get"><span class="search-icon" aria-hidden="true">⌕</span><input type="search" name="q" aria-label="Search Reels" placeholder="What are you curious about?" required><button type="submit">Explore →</button></form><p class="hint">Try “AI”, “startup”, or a place you love.</p></div><figure class="bay-scene"><div id="bay-art"><img class="golden-gate-art" src="/assets/golden-gate-pencil.png" alt="Pencil illustration of the Golden Gate Bridge from the Marin Headlands" width="2720" height="1536"></div><figcaption><span>Golden Gate</span></figcaption></figure></section>
+      <section id="city-notes"><div class="section-top"><div><div class="eyebrow">Community-reported moments worth sharing.</div><h2>Notes from the city</h2></div><p class="section-intro">Search for a spot you visited and leave your own mark.</p></div>
         <div class="map-split">
           <div class="map-area"><div id="map" aria-label="Map of San Francisco"></div><div class="map-fallback" id="map-fallback" hidden><div><strong>San Francisco is waiting.</strong><small id="map-error">Google Maps is unavailable right now.</small></div></div></div>
           <div class="note-panel">
@@ -61,8 +60,8 @@
             </div>
           </div>
         </div>
-        <div class="notes-bar"><span>Explore the pins or share a place you've visited.</span><button id="add-note" type="button">+ Leave a note</button></div></section>
-    </main><footer><span>© Insider · San Francisco</span><span>Discover the city through its people.</span></footer>
+        <div class="notes-bar"><span id="bar-count"></span><button id="add-note" type="button">+ Leave a note</button></div></section>
+    </main><footer><span>© Insider · San Francisco</span></footer>
   </div>
   <button class="drawer-backdrop" id="drawer-backdrop" type="button" aria-label="Close panel" tabindex="-1"></button>
   <aside class="drawer" id="note-drawer" role="dialog" aria-modal="true" aria-labelledby="drawer-title" aria-hidden="true">
@@ -78,9 +77,13 @@
     const form = document.getElementById('note-form'), status = document.getElementById('form-status');
     const count = document.getElementById('note-count'), selectedBox = document.getElementById('selected-place');
     const panelContent = document.getElementById('panel-content');
-    let map, selected = null, notes = [], noteIndex = -1, lastFocus = null, Place, Geocoder;
+    let map, selected = null, notes = [], noteTotal = 0, noteIndex = -1, lastFocus = null, Place, Geocoder;
     const markers = [], imageUrl = path => API + path;
-    function setCount() { count.textContent = `${notes.length} ${notes.length === 1 ? 'note' : 'notes'}`; }
+    const barCount = document.getElementById('bar-count');
+    function setCount(total = notes.length) { noteTotal = total; count.textContent = `${total} ${total === 1 ? 'note' : 'notes'}`; barCount.textContent = `${total} ${total === 1 ? 'mark' : 'marks'} left across the city`; }
+    async function refreshNoteTotal() {
+      try { const response = await fetch(`${API}/notes?summary=1`, { cache: 'no-store' }); if (response.ok) setCount((await response.json()).total); } catch (_) {}
+    }
     function showFallback(message) { document.getElementById('map-error').textContent = message; document.getElementById('map-fallback').hidden = false; }
     function showNote(index) {
       if (!notes.length) return;
@@ -176,7 +179,7 @@
     async function start() {
       try {
         const [configResponse,notesResponse] = await Promise.all([fetch(`${CONFIG_API}/config`),fetch(`${API}/notes`)]);
-        if (notesResponse.ok) { notes = (await notesResponse.json()).notes; setCount(); } else count.textContent = 'Notes unavailable';
+        if (notesResponse.ok) { const noteData = await notesResponse.json(); notes = noteData.notes; setCount(noteData.total ?? notes.length); } else { count.textContent = 'Notes unavailable'; barCount.textContent = 'Notes unavailable'; }
         const config = configResponse.ok ? await configResponse.json() : {};
         if (!config.googleMapsKey) { showFallback('Add GOOGLE_MAPS_API_KEY to the insider-ingest Worker, then deploy it.'); return; }
         await loadGoogleMaps(config.googleMapsKey);
@@ -218,11 +221,12 @@
       try {
         const response = await fetch(`${API}/notes`,{method:'POST',body}); const note = await response.json();
         if (!response.ok) throw new Error(note.error || 'Could not publish note.');
-        notes.unshift(note); addMarker(note,{lat:selected.lat,lng:selected.lng}); setCount(); form.reset(); document.getElementById('char-count').textContent = '0'; document.getElementById('file-label').textContent = '+ upload_file'; selected = null; selectedBox.hidden = true; status.textContent = '';
+        notes.unshift(note); addMarker(note,{lat:selected.lat,lng:selected.lng}); setCount(noteTotal + 1); form.reset(); document.getElementById('char-count').textContent = '0'; document.getElementById('file-label').textContent = '+ upload_file'; selected = null; selectedBox.hidden = true; status.textContent = '';
         closeDrawer(); showNote(0);
       } catch (error) { status.textContent = error.message; } finally { submit.disabled = false; }
     });
     start();
+    window.setInterval(refreshNoteTotal, 60_000);
   </script>
 </body>
 </html>

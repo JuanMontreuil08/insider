@@ -5,7 +5,7 @@
 	"scripts": {
 		"dev:site": "node --env-file=.env dev-server.mjs",
 		"check:types": "cd worker && tsc --noEmit",
-		"build:site": "mkdir -p dist/site/assets && cp index.html map.html dist/site/ && cp assets/* dist/site/assets/ && node scripts/three-vendor.mjs --build && cp node_modules/three/LICENSE dist/site/assets/three-LICENSE.txt"
+		"build:site": "rm -rf dist/site && mkdir -p dist/site/assets && cp index.html map.html dist/site/ && cp assets/editorial.css assets/golden-gate-pencil.png dist/site/assets/"
 	},
 	"devDependencies": {
 		"@types/node": "^22.10.10",

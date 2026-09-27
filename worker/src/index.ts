@@ -133,19 +133,16 @@ export default {
 		}
 
 		if (pathname === '/notes' && request.method === 'GET') {
-			const keys: string[] = [];
-			let cursor: string | undefined;
-			do {
-				const page = await env.BUCKET.list({ prefix: NOTES_PREFIX, limit: 1000, cursor });
-				keys.push(...page.objects.map((item) => item.key));
-				cursor = page.truncated ? page.cursor : undefined;
-			} while (cursor);
+			const keys = await listNoteKeys(env.BUCKET);
+			if (requestUrl.searchParams.get('summary') === '1') {
+				return Response.json({ total: keys.length }, { headers: { ...corsHeaders, 'Cache-Control': 'no-store' } });
+			}
 			const notes = (await Promise.all(keys.map(async (key) => {
 				const object = await env.BUCKET.get(key);
 				return object ? (await object.json()) as PlaceNote : null;
 			}))).filter((note): note is PlaceNote => note !== null);
 			notes.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-			return Response.json({ notes }, { headers: { ...corsHeaders, 'Cache-Control': 'no-store' } });
+			return Response.json({ notes, total: keys.length }, { headers: { ...corsHeaders, 'Cache-Control': 'no-store' } });
 		}
 
 		if (pathname === '/notes' && request.method === 'POST') {
@@ -203,6 +200,17 @@ export default {
 		return env.ASSETS.fetch(request);
 	},
 };
+
+async function listNoteKeys(bucket: R2Bucket): Promise<string[]> {
+	const keys: string[] = [];
+	let cursor: string | undefined;
+	do {
+		const page = await bucket.list({ prefix: NOTES_PREFIX, limit: 1000, cursor });
+		keys.push(...page.objects.map((item) => item.key));
+		cursor = page.truncated ? page.cursor : undefined;
+	} while (cursor);
+	return keys;
+}
 
 async function activateMcpConnection(request: Request, env: Env) {
 	if (!hasInternalMcpSecret(request, env)) return new Response('Not found', { status: 404 });
